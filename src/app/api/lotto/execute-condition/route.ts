@@ -1,0 +1,88 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { createServerClient } from '@/lib/supabase';
+
+interface LottoResult {
+  round: number;
+  draw_date: string;
+  num1: number;
+  num2: number;
+  num3: number;
+  num4: number;
+  num5: number;
+  num6: number;
+}
+
+function getTopSixNumbers(results: LottoResult[]): { numbers: number[]; frequencies: number[] } {
+  const freq: Record<number, number> = {};
+
+  for (const row of results) {
+    for (const num of [row.num1, row.num2, row.num3, row.num4, row.num5, row.num6]) {
+      if (num != null) {
+        freq[num] = (freq[num] ?? 0) + 1;
+      }
+    }
+  }
+
+  const top6 = Object.entries(freq)
+    .map(([num, count]) => ({ num: Number(num), count }))
+    .sort((a, b) => b.count - a.count || a.num - b.num)
+    .slice(0, 6);
+
+  return {
+    numbers: top6.map((x) => x.num),
+    frequencies: top6.map((x) => x.count),
+  };
+}
+
+export async function POST(req: NextRequest) {
+  const supabase = createServerClient();
+
+  let body: { years?: number; months?: number };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ success: false, error: '잘못된 요청 형식입니다.' }, { status: 400 });
+  }
+
+  const years = Number(body.years ?? 0);
+  const months = Number(body.months ?? 0);
+  // 1년 = 52회, 1개월 = 4회. 둘 다 0이면 전체 회차
+  const limit = years > 0 || months > 0 ? years * 52 + months * 4 : null;
+
+  // 전체 회차 페이지네이션 fetch (Supabase 기본 1000행 제한 우회)
+  const PAGE = 1000;
+  const allResults: LottoResult[] = [];
+  let from = 0;
+
+  while (true) {
+    const { data, error: fetchErr } = await supabase
+      .from('lotto_results')
+      .select('round, draw_date, num1, num2, num3, num4, num5, num6')
+      .order('round', { ascending: false })
+      .range(from, from + PAGE - 1);
+
+    if (fetchErr) {
+      return NextResponse.json({ success: false, error: fetchErr.message }, { status: 500 });
+    }
+    if (!data || data.length === 0) break;
+    allResults.push(...(data as LottoResult[]));
+    if (data.length < PAGE) break;
+    from += PAGE;
+  }
+
+  const filteredResults = limit != null ? allResults.slice(0, limit) : allResults;
+  const { numbers, frequencies } = getTopSixNumbers(filteredResults);
+
+  if (numbers.length < 6) {
+    return NextResponse.json({ success: false, error: '충분한 데이터가 없습니다.' }, { status: 422 });
+  }
+
+  return NextResponse.json({
+    success: true,
+    data: {
+      numbers,
+      frequencies,
+      rounds_analyzed: filteredResults.length,
+    },
+  });
+}
