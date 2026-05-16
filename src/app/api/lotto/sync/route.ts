@@ -22,7 +22,7 @@ async function fetchLottoRound(round: number): Promise<LottoApiResponse | null> 
   try {
     const res = await fetch(`${LOTTO_API_BASE}${round}`, {
       next: { revalidate: 0 },
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(3000),
     });
     if (!res.ok) return null;
     const data: LottoApiResponse = await res.json();

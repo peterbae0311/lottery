@@ -247,6 +247,14 @@ export default function Home() {
   // ---------------------------------------------------------------------------
 
   const syncAndLoad = useCallback(async () => {
+    // 데이터 즉시 로드 (sync 결과와 무관하게 먼저 표시)
+    try {
+      const res = await fetch('/api/lotto/results');
+      const data = await res.json();
+      if (data.success) setResults(data.data ?? []);
+    } catch { /* silently fail */ }
+
+    // sync는 백그라운드에서 실행 (실패해도 데이터 표시에 영향 없음)
     setIsSyncing(true);
     setSyncMessage('동기화 중...');
     try {
@@ -254,25 +262,22 @@ export default function Home() {
       const syncData = await syncRes.json();
       if (syncData.success) {
         const synced = syncData.data?.syncedRounds ?? 0;
-        setSyncMessage(synced > 0 ? `${synced}개 회차 동기화 완료` : '최신 데이터입니다');
+        if (synced > 0) {
+          setSyncMessage(`${synced}개 회차 동기화 완료`);
+          // 새 데이터가 있으면 결과 갱신
+          const res = await fetch('/api/lotto/results');
+          const data = await res.json();
+          if (data.success) setResults(data.data ?? []);
+        } else {
+          setSyncMessage('최신 데이터입니다');
+        }
       } else {
-        setSyncMessage('동기화 실패: ' + (syncData.error ?? ''));
+        setSyncMessage('');
       }
     } catch {
-      setSyncMessage('동기화 중 오류 발생');
+      setSyncMessage('');
     } finally {
       setIsSyncing(false);
-    }
-
-    // Load results regardless of sync outcome
-    try {
-      const res = await fetch('/api/lotto/results');
-      const data = await res.json();
-      if (data.success) {
-        setResults(data.data ?? []);
-      }
-    } catch {
-      // silently fail — table might be empty
     }
   }, []);
 
