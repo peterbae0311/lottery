@@ -251,8 +251,14 @@ export default function Home() {
     try {
       const res = await fetch('/api/lotto/results');
       const data = await res.json();
-      if (data.success) setResults(data.data ?? []);
-    } catch { /* silently fail */ }
+      if (data.success) {
+        setResults(data.data ?? []);
+      } else {
+        setSyncMessage('데이터 로드 실패: ' + (data.error ?? ''));
+      }
+    } catch (err) {
+      setSyncMessage('데이터 로드 오류: ' + (err instanceof Error ? err.message : String(err)));
+    }
 
     // sync는 백그라운드에서 실행 (실패해도 데이터 표시에 영향 없음)
     setIsSyncing(true);
