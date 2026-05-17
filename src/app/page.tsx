@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -171,6 +171,8 @@ export default function Home() {
   const [isSavingPredicted, setIsSavingPredicted] = useState(false);
   const [type2Provider, setType2Provider] = useState('');
   const [type3Provider, setType3Provider] = useState('');
+  // DB에서 불러온 직후 auto-save 방지용 플래그
+  const skipSaveRef = useRef(false);
 
   // ---------------------------------------------------------------------------
   // Load saved conditions from DB on mount
@@ -264,9 +266,12 @@ export default function Home() {
         const res = await fetch('/api/lotto/predicted');
         const data = await res.json();
         if (data.success) {
+          skipSaveRef.current = true;
           if (Array.isArray(data.data.type1) && data.data.type1.length === 6) setType1Numbers(data.data.type1);
           if (Array.isArray(data.data.type2) && data.data.type2.length > 0) setType2Numbers(data.data.type2);
           if (Array.isArray(data.data.type3) && data.data.type3.length > 0) setType3Numbers(data.data.type3);
+          // 다음 렌더 사이클 이후 플래그 해제
+          setTimeout(() => { skipSaveRef.current = false; }, 0);
         }
       } catch { /* ignore */ }
     })();
@@ -425,11 +430,13 @@ export default function Home() {
 
   // Auto-save type1 when it changes
   useEffect(() => {
+    if (skipSaveRef.current) return;
     if (type1Numbers.length === 6) savePredictions(type1Numbers, type2Numbers, type3Numbers);
   }, [type1Numbers]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Save all when AI finishes
   useEffect(() => {
+    if (skipSaveRef.current) return;
     if (type2Numbers.length > 0 || type3Numbers.length > 0) {
       savePredictions(type1Numbers, type2Numbers, type3Numbers);
     }

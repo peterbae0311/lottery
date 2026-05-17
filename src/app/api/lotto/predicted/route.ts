@@ -48,7 +48,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: '저장할 데이터가 없습니다.' }, { status: 422 });
   }
 
-  await supabase.from('lotto_predicted').delete().gte('id', 0);
+  const { error: delError } = await supabase.from('lotto_predicted').delete().gte('id', 0);
+  if (delError) return NextResponse.json({ success: false, error: '기존 데이터 삭제 실패: ' + delError.message }, { status: 500 });
   const { error } = await supabase.from('lotto_predicted').insert(rows);
   if (error) return NextResponse.json({ success: false, error: error.message }, { status: 500 });
 
