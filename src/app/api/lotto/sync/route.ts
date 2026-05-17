@@ -50,9 +50,8 @@ export async function GET() {
     const upserted: number[] = [];
     let consecutiveFailures = 0;
     const MAX_CONSECUTIVE_FAILURES = 3;
-    const MAX_ROUND = 1200;
 
-    for (let round = startRound; round <= MAX_ROUND; round++) {
+    for (let round = startRound; ; round++) {
       const data = await fetchLottoRound(round);
 
       if (!data) {
