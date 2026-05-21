@@ -52,7 +52,7 @@ function buildPrompt(type: 2 | 3, combCount: number, freqStr: string, pool?: num
 - 홀수 2~4개 (홀짝 균형)
 - 번호대(1~9, 10~19, 20~29, 30~39, 40~45) 가급적 분산
 - 연속 번호 최대 2개
-- 조합 간 중복 최소화`;
+- 조합 간 유사성 제거: 어떤 두 조합도 4개 이상의 번호를 공유하면 안 됨 (최대 3개 공유 허용)`;
 
   const jsonExample = Array.from({ length: combCount }, () => '[n,n,n,n,n,n]').join(',');
 
@@ -91,6 +91,32 @@ function parseText(text: string, combCount: number): number[][] {
     .slice(0, combCount)
     .map(combo => [...new Set(combo.filter((n: number) => n >= 1 && n <= 45))].sort((a, b) => a - b))
     .filter(combo => combo.length === 6);
+}
+
+function sharedCount(a: number[], b: number[]): number {
+  const setB = new Set(b);
+  return a.filter(n => setB.has(n)).length;
+}
+
+function randomCombo(pool: number[]): number[] {
+  const shuffled = [...pool].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, 6).sort((a, b) => a - b);
+}
+
+function ensureDiversity(combos: number[][], targetCount: number, pool: number[], maxShared = 3): number[][] {
+  const result: number[][] = [];
+  for (const combo of combos) {
+    if (result.length >= targetCount) break;
+    if (!result.some(r => sharedCount(combo, r) > maxShared)) result.push(combo);
+  }
+  let attempts = 0;
+  while (result.length < targetCount && attempts < 2000) {
+    attempts++;
+    const candidate = randomCombo(pool);
+    if (candidate.length === 6 && !result.some(r => sharedCount(candidate, r) > maxShared))
+      result.push(candidate);
+  }
+  return result;
 }
 
 function isRateLimit(err: unknown): boolean {
@@ -165,10 +191,10 @@ async function callAnthropic(prompt: string): Promise<string> {
 }
 
 const PROVIDERS = [
-  { name: 'Gemini', fn: callGemini },
-  { name: 'Groq', fn: callGroq },
-  { name: 'OpenRouter', fn: callOpenRouter },
-  { name: 'Anthropic', fn: callAnthropic },
+  { name: 'Gemini',      model: 'gemini-2.0-flash-lite',              cutoff: '2024년 8월',  fn: callGemini },
+  { name: 'Groq',        model: 'llama-3.3-70b-versatile',            cutoff: '2023년 12월', fn: callGroq },
+  { name: 'OpenRouter',  model: 'llama-3.1-8b-instruct',              cutoff: '2023년 3월',  fn: callOpenRouter },
+  { name: 'Anthropic',   model: 'claude-haiku-4-5',                   cutoff: '2025년 4월',  fn: callAnthropic },
 ];
 
 export async function POST(req: NextRequest) {
@@ -190,14 +216,16 @@ export async function POST(req: NextRequest) {
   const freq = await getLottoFrequencies();
   const prompt = buildPrompt(body.type, combCount, freqSummary(freq), pool);
 
+  const fullPool = pool ?? Array.from({ length: 45 }, (_, i) => i + 1);
   const errors: string[] = [];
 
-  for (const { name, fn } of PROVIDERS) {
+  for (const { name, model, cutoff, fn } of PROVIDERS) {
     try {
       const text = await fn(prompt);
-      const combinations = parseText(text, combCount);
-      if (combinations.length === 0) throw new Error('유효한 조합 없음');
-      return NextResponse.json({ success: true, data: { combinations, provider: name } });
+      const raw = parseText(text, combCount);
+      if (raw.length === 0) throw new Error('유효한 조합 없음');
+      const combinations = ensureDiversity(raw, combCount, fullPool);
+      return NextResponse.json({ success: true, data: { combinations, provider: name, model, cutoff } });
     } catch (err) {
       if (err instanceof NoKeyError) continue;
       if (err instanceof RateLimitError) { errors.push(`${name}: rate limit`); continue; }

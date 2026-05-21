@@ -171,6 +171,10 @@ export default function Home() {
   const [isSavingPredicted, setIsSavingPredicted] = useState(false);
   const [type2Provider, setType2Provider] = useState('');
   const [type3Provider, setType3Provider] = useState('');
+  const [type2Model, setType2Model] = useState('');
+  const [type2Cutoff, setType2Cutoff] = useState('');
+  const [type3Model, setType3Model] = useState('');
+  const [type3Cutoff, setType3Cutoff] = useState('');
   // DB에서 불러온 직후 auto-save 방지용 플래그
   const skipSaveRef = useRef(false);
 
@@ -380,8 +384,8 @@ export default function Home() {
   const generateAIPredictions = useCallback(async () => {
     setIsGeneratingAI(true);
     setAiError('');
-    setType2Provider('');
-    setType3Provider('');
+    setType2Provider(''); setType2Model(''); setType2Cutoff('');
+    setType3Provider(''); setType3Model(''); setType3Cutoff('');
     const section2Numbers = conditions
       .filter((c) => c.numbers !== null && c.numbers.length === 6)
       .map((c) => c.numbers as number[]);
@@ -401,12 +405,16 @@ export default function Home() {
       if (d2.success && Array.isArray(d2.data?.combinations)) {
         setType2Numbers(d2.data.combinations);
         if (d2.data.provider) setType2Provider(d2.data.provider);
+        if (d2.data.model) setType2Model(d2.data.model);
+        if (d2.data.cutoff) setType2Cutoff(d2.data.cutoff);
       } else {
         setAiError(d2.error ?? 'AI 생성 오류');
       }
       if (d3.success && Array.isArray(d3.data?.combinations)) {
         setType3Numbers(d3.data.combinations);
         if (d3.data.provider) setType3Provider(d3.data.provider);
+        if (d3.data.model) setType3Model(d3.data.model);
+        if (d3.data.cutoff) setType3Cutoff(d3.data.cutoff);
       }
     } catch { setAiError('AI 서버 연결 오류'); }
     finally { setIsGeneratingAI(false); }
@@ -461,8 +469,8 @@ export default function Home() {
     <main className="w-full h-screen overflow-hidden bg-gray-50 font-sans">
       <div className="flex gap-0 h-full">
 
-        {/* ===== LEFT 80% ===== */}
-        <div className="flex-[4] min-w-0 flex flex-col overflow-hidden">
+        {/* ===== LEFT 70% ===== */}
+        <div className="flex-[7] min-w-0 flex flex-col overflow-hidden">
 
           {/* SECTION 1 */}
           <section className="flex-[2] min-h-0 flex flex-col bg-white border-b border-r border-gray-200 shadow-sm">
@@ -624,8 +632,8 @@ export default function Home() {
 
         </div>{/* end left */}
 
-        {/* ===== RIGHT 20%: Section 3 ===== */}
-        <div className="w-1/5 flex-shrink-0 h-full">
+        {/* ===== RIGHT 30%: Section 3 ===== */}
+        <div className="w-[30%] flex-shrink-0 h-full">
           <section className="h-full flex flex-col bg-white border-l border-gray-200 shadow-sm overflow-hidden">
 
             {/* Header */}
@@ -653,9 +661,14 @@ export default function Home() {
                   {isSavingPredicted && <span className="text-[10px] text-gray-400 ml-1">저장 중...</span>}
                 </div>
                 {type1Numbers.length === 6 ? (
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-[15px] ml-[22px]">
                     {type1Numbers.map((num, idx) => (
-                      <NumberBall key={idx} num={num} size="sm" freq={type1Freqs[idx]} />
+                      <div key={idx} className="flex flex-col items-center gap-0.5">
+                        <NumberBall num={num} size="sm" />
+                        {type1Freqs[idx] != null && (
+                          <span className="text-[9px] text-indigo-400 font-medium">{type1Freqs[idx]}회</span>
+                        )}
+                      </div>
                     ))}
                   </div>
                 ) : (
@@ -669,7 +682,7 @@ export default function Home() {
                   <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-violet-500 text-white text-[10px] font-bold">2</span>
                   <span className="text-xs font-semibold text-violet-800">AI 생성 (섹션2 기반) × 4</span>
                 </div>
-                <div className="flex items-center gap-1.5 mb-1.5">
+                <div className="flex flex-wrap items-center gap-1 mb-1.5">
                   <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-100 text-violet-600 border border-violet-200">
                     섹션2 고빈도 번호 풀 기반
                   </span>
@@ -678,13 +691,26 @@ export default function Home() {
                       {type2Provider}
                     </span>
                   )}
+                  {type2Model && (
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-500 border border-indigo-100">
+                      {type2Model}
+                    </span>
+                  )}
+                  {type2Cutoff && (
+                    <span className="text-[10px] text-gray-400">학습종료 {type2Cutoff}</span>
+                  )}
                 </div>
+                <p className="text-[10px] text-violet-500/80 leading-relaxed mb-1.5">
+                  섹션2 조건을 통과한 회차의 번호를 분석하여 고빈도 번호 풀을 구성합니다.<br/>
+                  해당 풀 내에서만 번호를 선택하며, Hot/Cold 가중치를 적용합니다.<br/>
+                  홀짝 균형·번호대 분산·합계 100~175 범위를 검증하여 4개 조합을 생성합니다.
+                </p>
                 {type2Numbers.length > 0 ? (
                   <div>
                     {type2Numbers.map((combo, i) => (
                       <div key={i} className={`flex items-center gap-1.5 py-2.5 ${i > 0 ? 'border-t border-violet-100' : ''}`}>
                         <span className="text-[10px] text-violet-400 w-4 flex-shrink-0">{i+1}</span>
-                        <div className="flex gap-2 flex-wrap">
+                        <div className="flex gap-[15px] flex-wrap">
                           {combo.map((num, j) => <NumberBall key={j} num={num} size="sm" />)}
                         </div>
                       </div>
@@ -701,7 +727,7 @@ export default function Home() {
                   <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500 text-white text-[10px] font-bold">3</span>
                   <span className="text-xs font-semibold text-emerald-800">AI 생성 (1~45 전체) × 5</span>
                 </div>
-                <div className="flex items-center gap-1.5 mb-1.5">
+                <div className="flex flex-wrap items-center gap-1 mb-1.5">
                   <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-100 text-emerald-600 border border-emerald-200">
                     1~45 전체 통계 분석 기반
                   </span>
@@ -710,13 +736,26 @@ export default function Home() {
                       {type3Provider}
                     </span>
                   )}
+                  {type3Model && (
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-500 border border-indigo-100">
+                      {type3Model}
+                    </span>
+                  )}
+                  {type3Cutoff && (
+                    <span className="text-[10px] text-gray-400">학습종료 {type3Cutoff}</span>
+                  )}
                 </div>
+                <p className="text-[10px] text-emerald-500/80 leading-relaxed mb-1.5">
+                  역대 전체 로또 당첨번호의 출현 빈도를 통계 분석합니다.<br/>
+                  빈출(Hot)·장기 미출현(Cold) 번호를 적절히 혼합하여 선택합니다.<br/>
+                  번호대 분산·홀짝 균형·합계 100~175 범위를 최적화하여 5개 조합을 생성합니다.
+                </p>
                 {type3Numbers.length > 0 ? (
                   <div>
                     {type3Numbers.map((combo, i) => (
                       <div key={i} className={`flex items-center gap-1.5 py-2.5 ${i > 0 ? 'border-t border-emerald-100' : ''}`}>
                         <span className="text-[10px] text-emerald-400 w-4 flex-shrink-0">{i+1}</span>
-                        <div className="flex gap-2 flex-wrap">
+                        <div className="flex gap-[15px] flex-wrap">
                           {combo.map((num, j) => <NumberBall key={j} num={num} size="sm" />)}
                         </div>
                       </div>
