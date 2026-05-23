@@ -570,41 +570,49 @@ export default function Home() {
 
       let newType2Provider = '', newType2Model = '', newType2Cutoff = '';
       let newType3Provider = '', newType3Model = '', newType3Cutoff = '';
+      let newType2: number[][] = type2Numbers;
+      let newType3: number[][] = type3Numbers;
 
       if (d2.success && Array.isArray(d2.data?.combinations)) {
-        setType2Numbers(d2.data.combinations);
+        newType2 = d2.data.combinations;
         newType2Provider = d2.data.provider ?? '';
         newType2Model    = d2.data.model    ?? '';
         newType2Cutoff   = d2.data.cutoff   ?? '';
-        setType2Provider(newType2Provider);
-        setType2Model(newType2Model);
-        setType2Cutoff(newType2Cutoff);
       } else {
         setAiError(d2.error ?? 'AI 생성 오류');
       }
       if (d3.success && Array.isArray(d3.data?.combinations)) {
-        setType3Numbers(d3.data.combinations);
+        newType3 = d3.data.combinations;
         newType3Provider = d3.data.provider ?? '';
         newType3Model    = d3.data.model    ?? '';
         newType3Cutoff   = d3.data.cutoff   ?? '';
-        setType3Provider(newType3Provider);
-        setType3Model(newType3Model);
-        setType3Cutoff(newType3Cutoff);
       }
 
-      // AI 모델 정보를 포함해서 즉시 저장
-      if (d2.success || d3.success) {
-        const t2 = d2.success && Array.isArray(d2.data?.combinations) ? d2.data.combinations : type2Numbers;
-        const t3 = d3.success && Array.isArray(d3.data?.combinations) ? d3.data.combinations : type3Numbers;
-        await fetch('/api/lotto/predicted', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type1: type1Numbers, type2: t2, type3: t3,
-            type2Provider: newType2Provider, type2Model: newType2Model, type2Cutoff: newType2Cutoff,
-            type3Provider: newType3Provider, type3Model: newType3Model, type3Cutoff: newType3Cutoff,
-          }),
-        });
-      }
+      // 자동-저장 effect가 모델 정보 없이 덮어쓰지 않도록 차단
+      skipSaveRef.current = true;
+
+      setType2Numbers(newType2);
+      setType2Provider(newType2Provider);
+      setType2Model(newType2Model);
+      setType2Cutoff(newType2Cutoff);
+      setType3Numbers(newType3);
+      setType3Provider(newType3Provider);
+      setType3Model(newType3Model);
+      setType3Cutoff(newType3Cutoff);
+
+      // 모델 정보 포함하여 명시적으로 저장
+      await fetch('/api/lotto/predicted', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type1: type1Numbers, type2: newType2, type3: newType3,
+          type2Provider: newType2Provider, type2Model: newType2Model, type2Cutoff: newType2Cutoff,
+          type3Provider: newType3Provider, type3Model: newType3Model, type3Cutoff: newType3Cutoff,
+        }),
+      });
+
+      // 저장 완료 후 자동-저장 재개
+      setTimeout(() => { skipSaveRef.current = false; }, 0);
+
     } catch { setAiError('AI 서버 연결 오류'); }
     finally { setIsGeneratingAI(false); }
   }, [conditions, type1Numbers, type2Numbers, type3Numbers]);
