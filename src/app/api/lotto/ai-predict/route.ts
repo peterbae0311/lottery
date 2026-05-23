@@ -38,7 +38,16 @@ function freqSummary(freq: FreqMap): string {
     .join(' ');
 }
 
-function buildPrompt(type: 2 | 3, combCount: number, freqStr: string, pool?: number[]): string {
+function distSummary(dist: number[]): string {
+  const labels = ['01~09', '10~19', '20~29', '30~39', '40~45'];
+  const total = dist.reduce((a, b) => a + b, 0);
+  return dist.map((v, i) => {
+    const pct = total > 0 ? Math.round((v / total) * 100) : 0;
+    return `${labels[i]}: ${v}회(${pct}%)`;
+  }).join(', ');
+}
+
+function buildPrompt(type: 2 | 3, combCount: number, freqStr: string, pool?: number[], distribution?: number[]): string {
   const rolePrompt = `당신은 로또 번호 생성 전문 AI입니다. 다음 5가지 역할을 동시에 수행합니다:
 1. 데이터 분석가: 번호별 출현 빈도·패턴·시계열 분석
 2. 확률 모델러: 빈출(Hot)/미출현(Cold) 번호에 가중치 부여, 조건부 확률 계산
@@ -55,11 +64,14 @@ function buildPrompt(type: 2 | 3, combCount: number, freqStr: string, pool?: num
 - 조합 간 유사성 제거: 어떤 두 조합도 4개 이상의 번호를 공유하면 안 됨 (최대 3개 공유 허용)`;
 
   const jsonExample = Array.from({ length: combCount }, () => '[n,n,n,n,n,n]').join(',');
+  const distBlock = distribution && distribution.length === 5
+    ? `\n번호대별 분포 현황: ${distSummary(distribution)}`
+    : '';
 
   if (type === 2 && pool) {
     return `${rolePrompt}
 
-역대 번호별 출현 빈도 (번호:횟수): ${freqStr}
+역대 번호별 출현 빈도 (번호:횟수): ${freqStr}${distBlock}
 
 섹션2 분석 결과 고빈도 번호 풀: [${pool.join(', ')}]
 이 번호 풀에서만 선택하여 조합 ${combCount}개를 생성하세요.
@@ -72,7 +84,7 @@ ${rules}
 
   return `${rolePrompt}
 
-역대 번호별 출현 빈도 (번호:횟수): ${freqStr}
+역대 번호별 출현 빈도 (번호:횟수): ${freqStr}${distBlock}
 
 1~45 전체 번호를 대상으로 통계 분석과 확률 모델링을 적용하여 최적 조합 ${combCount}개를 생성하세요.
 빈출(Hot) 번호와 장기 미출현(Cold) 번호를 적절히 혼합하세요.
@@ -198,7 +210,7 @@ const PROVIDERS = [
 ];
 
 export async function POST(req: NextRequest) {
-  let body: { type: 2 | 3; section2Numbers?: number[][] };
+  let body: { type: 2 | 3; section2Numbers?: number[][]; distribution?: number[] };
   try { body = await req.json(); } catch {
     return NextResponse.json({ success: false, error: '잘못된 요청 형식입니다.' }, { status: 400 });
   }
@@ -214,7 +226,8 @@ export async function POST(req: NextRequest) {
   }
 
   const freq = await getLottoFrequencies();
-  const prompt = buildPrompt(body.type, combCount, freqSummary(freq), pool);
+  const distribution = body.distribution && body.distribution.length === 5 ? body.distribution : undefined;
+  const prompt = buildPrompt(body.type, combCount, freqSummary(freq), pool, distribution);
 
   const fullPool = pool ?? Array.from({ length: 45 }, (_, i) => i + 1);
   const errors: string[] = [];

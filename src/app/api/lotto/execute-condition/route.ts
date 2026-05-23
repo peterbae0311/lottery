@@ -28,6 +28,22 @@ function getTopSixNumbers(results: LottoResult[]): { numbers: number[]; frequenc
   return { numbers: top6.map((x) => x.num), frequencies: top6.map((x) => x.count) };
 }
 
+// 번호대별 분포: [01-09, 10-19, 20-29, 30-39, 40-45]
+function getDistribution(results: LottoResult[]): number[] {
+  const ranges = [0, 0, 0, 0, 0];
+  for (const row of results) {
+    for (const num of [row.num1, row.num2, row.num3, row.num4, row.num5, row.num6]) {
+      if (num == null) continue;
+      if      (num <= 9)  ranges[0]++;
+      else if (num <= 19) ranges[1]++;
+      else if (num <= 29) ranges[2]++;
+      else if (num <= 39) ranges[3]++;
+      else                ranges[4]++;
+    }
+  }
+  return ranges;
+}
+
 export async function POST(req: NextRequest) {
   const supabase = createServerClient();
 
@@ -84,8 +100,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: '충분한 데이터가 없습니다.' }, { status: 422 });
   }
 
+  const distribution = getDistribution(filteredResults);
+
   return NextResponse.json({
     success: true,
-    data: { numbers, frequencies, rounds_analyzed: filteredResults.length },
+    data: { numbers, frequencies, rounds_analyzed: filteredResults.length, distribution },
   });
 }

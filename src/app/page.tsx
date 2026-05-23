@@ -34,6 +34,7 @@ interface ConditionRow {
   roundsAnalyzed: number | null;
   numbers: number[] | null;
   frequencies: number[] | null;
+  distribution: number[] | null; // [01-09, 10-19, 20-29, 30-39, 40-45]
   isLoading: boolean;
 }
 
@@ -90,7 +91,7 @@ function getTopSixFromNumberSets(numberSets: number[][]): { numbers: number[]; f
   return { numbers: top6.map((x) => x.num), frequencies: top6.map((x) => x.count) };
 }
 
-const BLANK_ROW = { roundsAnalyzed: null, numbers: null, frequencies: null, isLoading: false };
+const BLANK_ROW = { roundsAnalyzed: null, numbers: null, frequencies: null, distribution: null, isLoading: false };
 const DEFAULT_CONDITIONS: ConditionRow[] = [
   { id: makeId(), conditionType: 1, years: 0, months: 1,  maxWinners: 0, maxPrizeAmt: 0, ...BLANK_ROW },
   { id: makeId(), conditionType: 1, years: 0, months: 3,  maxWinners: 0, maxPrizeAmt: 0, ...BLANK_ROW },
@@ -103,7 +104,7 @@ const DEFAULT_CONDITIONS: ConditionRow[] = [
 // NumberBall
 // ---------------------------------------------------------------------------
 
-function NumberBall({ num, size = 'md', freq }: { num: number | null; size?: 'sm' | 'md' | 'lg'; freq?: number }) {
+function NumberBall({ num, size = 'md', freq, hoverFreq }: { num: number | null; size?: 'sm' | 'md' | 'lg'; freq?: number; hoverFreq?: number }) {
   if (num == null) {
     const dim = size === 'lg' ? 'w-12 h-12 text-base' : size === 'sm' ? 'w-8 h-8 text-sm' : 'w-10 h-10 text-sm';
     return <span className={`inline-flex items-center justify-center ${dim} rounded-full bg-gray-100 text-gray-400 font-bold`}>-</span>;
@@ -113,7 +114,7 @@ function NumberBall({ num, size = 'md', freq }: { num: number | null; size?: 'sm
   if (num <= 10) colorClass = 'bg-yellow-400 text-white';
   else if (num <= 20) colorClass = 'bg-blue-500 text-white';
   else if (num <= 30) colorClass = 'bg-red-500 text-white';
-  else if (num <= 40) colorClass = 'bg-gray-600 text-white';
+  else if (num <= 40) colorClass = 'bg-orange-500 text-white';
   else colorClass = 'bg-green-500 text-white';
 
   if (freq != null) {
@@ -129,10 +130,103 @@ function NumberBall({ num, size = 'md', freq }: { num: number | null; size?: 'sm
   }
 
   const dim = size === 'lg' ? 'w-12 h-12 text-base' : size === 'sm' ? 'w-8 h-8 text-sm' : 'w-10 h-10 text-sm';
-  return (
+  const ball = (
     <span className={`inline-flex items-center justify-center ${dim} rounded-full ${colorClass} font-bold shadow-sm`}>
       {String(num).padStart(2, '0')}
     </span>
+  );
+
+  // 호버 시 빈도 표시 (hoverFreq)
+  if (hoverFreq != null) {
+    return (
+      <span className="relative group inline-flex flex-col items-center">
+        {ball}
+        <span className="absolute -top-5 left-1/2 -translate-x-1/2 whitespace-nowrap
+          bg-gray-800 text-white text-[9px] font-medium px-1.5 py-0.5 rounded
+          opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 z-10">
+          {hoverFreq}회
+        </span>
+      </span>
+    );
+  }
+
+  return ball;
+}
+
+// ---------------------------------------------------------------------------
+// DistributionPopup
+// ---------------------------------------------------------------------------
+
+function DistributionPopup({
+  distribution, conditionText, roundsAnalyzed, onClose,
+}: {
+  distribution: number[];
+  conditionText: string;
+  roundsAnalyzed: number | null;
+  onClose: () => void;
+}) {
+  const LABELS  = ['01 ~ 09', '10 ~ 19', '20 ~ 29', '30 ~ 39', '40 ~ 45'];
+  const COLORS  = ['bg-yellow-400', 'bg-blue-500', 'bg-red-500', 'bg-orange-500', 'bg-green-500'];
+  const TEXTCOL = ['text-yellow-600', 'text-blue-600', 'text-red-600', 'text-orange-600', 'text-green-600'];
+  const total   = distribution.reduce((a, b) => a + b, 0);
+  const maxVal  = Math.max(...distribution, 1);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl px-7 py-6 w-[480px] max-w-[92vw]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="text-base font-bold text-gray-800">📊 번호 분포도</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none px-1">✕</button>
+        </div>
+        <p className="text-[11px] text-gray-400 mb-5 leading-relaxed">
+          {conditionText}
+          {roundsAnalyzed != null ? <span className="ml-1 text-indigo-400 font-medium">· 분석 {roundsAnalyzed.toLocaleString()}회차</span> : ''}
+        </p>
+
+        {/* Bars */}
+        <div className="space-y-3.5">
+          {distribution.map((count, i) => {
+            const pct    = total > 0 ? Math.round((count / total) * 100) : 0;
+            const barPct = (count / maxVal) * 100;
+            return (
+              <div key={i} className="flex items-center gap-3">
+                <span className={`text-[11px] font-semibold w-[60px] flex-shrink-0 ${TEXTCOL[i]}`}>{LABELS[i]}</span>
+                <div className="flex-1 h-6 bg-gray-100 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full ${COLORS[i]} rounded-full`}
+                    style={{ width: `${barPct}%`, transition: 'width 0.5s ease' }}
+                  />
+                </div>
+                <div className="flex items-baseline gap-1 w-[90px] flex-shrink-0 justify-end">
+                  <span className="text-xs font-semibold text-gray-700">{count.toLocaleString()}회</span>
+                  <span className="text-[10px] text-gray-400">({pct}%)</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Footer */}
+        <div className="mt-5 pt-3 border-t border-gray-100 flex items-center justify-between">
+          <span className="text-[11px] text-gray-400">전체 <b>{total.toLocaleString()}</b>개 번호 분석</span>
+          <div className="flex gap-2.5">
+            {LABELS.map((label, i) => (
+              <div key={i} className="flex items-center gap-1">
+                <span className={`inline-block w-2 h-2 rounded-full ${COLORS[i]}`} />
+                <span className="text-[9px] text-gray-400">{label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -177,6 +271,14 @@ export default function Home() {
   const [type3Cutoff, setType3Cutoff] = useState('');
   // DB에서 불러온 직후 auto-save 방지용 플래그
   const skipSaveRef = useRef(false);
+
+  // 분포도 팝업
+  const [distPopup, setDistPopup] = useState<{
+    distribution: number[];
+    conditionText: string;
+    roundsAnalyzed: number | null;
+  } | null>(null);
+  const [distLoadingIds, setDistLoadingIds] = useState<Set<string>>(new Set());
 
   // ---------------------------------------------------------------------------
   // Load saved conditions from DB on mount
@@ -274,6 +376,12 @@ export default function Home() {
           if (Array.isArray(data.data.type1) && data.data.type1.length === 6) setType1Numbers(data.data.type1);
           if (Array.isArray(data.data.type2) && data.data.type2.length > 0) setType2Numbers(data.data.type2);
           if (Array.isArray(data.data.type3) && data.data.type3.length > 0) setType3Numbers(data.data.type3);
+          if (data.data.type2Provider) setType2Provider(data.data.type2Provider);
+          if (data.data.type2Model)    setType2Model(data.data.type2Model);
+          if (data.data.type2Cutoff)   setType2Cutoff(data.data.type2Cutoff);
+          if (data.data.type3Provider) setType3Provider(data.data.type3Provider);
+          if (data.data.type3Model)    setType3Model(data.data.type3Model);
+          if (data.data.type3Cutoff)   setType3Cutoff(data.data.type3Cutoff);
           // 다음 렌더 사이클 이후 플래그 해제
           setTimeout(() => { skipSaveRef.current = false; }, 0);
         }
@@ -297,13 +405,61 @@ export default function Home() {
       const data = await res.json();
       if (data.success && Array.isArray(data.data?.numbers)) {
         setConditions((prev) => prev.map((c) =>
-          c.id === rowId ? { ...c, numbers: data.data.numbers, frequencies: data.data.frequencies ?? null, roundsAnalyzed: data.data.rounds_analyzed ?? null, isLoading: false } : c
+          c.id === rowId ? {
+            ...c,
+            numbers: data.data.numbers,
+            frequencies: data.data.frequencies ?? null,
+            roundsAnalyzed: data.data.rounds_analyzed ?? null,
+            distribution: data.data.distribution ?? null,
+            isLoading: false,
+          } : c
         ));
       } else {
         setConditions((prev) => prev.map((c) => (c.id === rowId ? { ...c, isLoading: false } : c)));
       }
     } catch {
       setConditions((prev) => prev.map((c) => (c.id === rowId ? { ...c, isLoading: false } : c)));
+    }
+  }, [conditions]);
+
+  // 분포도 버튼: 이미 데이터 있으면 바로 팝업, 없으면 독립 API 호출 후 팝업
+  const openDistribution = useCallback(async (rowId: string) => {
+    const row = conditions.find((c) => c.id === rowId);
+    if (!row) return;
+
+    // 이미 분포 데이터가 있으면 즉시 팝업
+    if (row.distribution) {
+      setDistPopup({
+        distribution: row.distribution,
+        conditionText: buildConditionText(row.conditionType, row.years, row.months, row.maxWinners, row.maxPrizeAmt),
+        roundsAnalyzed: row.roundsAnalyzed,
+      });
+      return;
+    }
+
+    // 분포 데이터 없으면 독립적으로 fetch
+    setDistLoadingIds((prev) => new Set(prev).add(rowId));
+    try {
+      const res = await fetch('/api/lotto/execute-condition', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conditionType: row.conditionType, years: row.years, months: row.months, maxWinners: row.maxWinners, maxPrizeAmt: row.maxPrizeAmt }),
+      });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.data?.distribution)) {
+        const dist: number[] = data.data.distribution;
+        // 분포 데이터만 조용히 저장 (numbers는 덮어쓰지 않음)
+        setConditions((prev) => prev.map((c) =>
+          c.id === rowId ? { ...c, distribution: dist, roundsAnalyzed: data.data.rounds_analyzed ?? c.roundsAnalyzed } : c
+        ));
+        setDistPopup({
+          distribution: dist,
+          conditionText: buildConditionText(row.conditionType, row.years, row.months, row.maxWinners, row.maxPrizeAmt),
+          roundsAnalyzed: data.data.rounds_analyzed ?? row.roundsAnalyzed,
+        });
+      }
+    } catch { /* ignore */ }
+    finally {
+      setDistLoadingIds((prev) => { const s = new Set(prev); s.delete(rowId); return s; });
     }
   }, [conditions]);
 
@@ -386,39 +542,72 @@ export default function Home() {
     setAiError('');
     setType2Provider(''); setType2Model(''); setType2Cutoff('');
     setType3Provider(''); setType3Model(''); setType3Cutoff('');
-    const section2Numbers = conditions
-      .filter((c) => c.numbers !== null && c.numbers.length === 6)
-      .map((c) => c.numbers as number[]);
+
+    const executedConditions = conditions.filter((c) => c.numbers !== null && c.numbers.length === 6);
+    const section2Numbers = executedConditions.map((c) => c.numbers as number[]);
+
+    // 조건별 분포도를 집계하여 AI input으로 사용
+    const aggDist = [0, 0, 0, 0, 0];
+    for (const c of executedConditions) {
+      if (c.distribution && c.distribution.length === 5) {
+        c.distribution.forEach((v, i) => { aggDist[i] += v; });
+      }
+    }
+    const distribution = aggDist.some(v => v > 0) ? aggDist : undefined;
 
     try {
       const [res2, res3] = await Promise.all([
         fetch('/api/lotto/ai-predict', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: 2, section2Numbers }),
+          body: JSON.stringify({ type: 2, section2Numbers, distribution }),
         }),
         fetch('/api/lotto/ai-predict', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: 3 }),
+          body: JSON.stringify({ type: 3, distribution }),
         }),
       ]);
       const [d2, d3] = await Promise.all([res2.json(), res3.json()]);
+
+      let newType2Provider = '', newType2Model = '', newType2Cutoff = '';
+      let newType3Provider = '', newType3Model = '', newType3Cutoff = '';
+
       if (d2.success && Array.isArray(d2.data?.combinations)) {
         setType2Numbers(d2.data.combinations);
-        if (d2.data.provider) setType2Provider(d2.data.provider);
-        if (d2.data.model) setType2Model(d2.data.model);
-        if (d2.data.cutoff) setType2Cutoff(d2.data.cutoff);
+        newType2Provider = d2.data.provider ?? '';
+        newType2Model    = d2.data.model    ?? '';
+        newType2Cutoff   = d2.data.cutoff   ?? '';
+        setType2Provider(newType2Provider);
+        setType2Model(newType2Model);
+        setType2Cutoff(newType2Cutoff);
       } else {
         setAiError(d2.error ?? 'AI 생성 오류');
       }
       if (d3.success && Array.isArray(d3.data?.combinations)) {
         setType3Numbers(d3.data.combinations);
-        if (d3.data.provider) setType3Provider(d3.data.provider);
-        if (d3.data.model) setType3Model(d3.data.model);
-        if (d3.data.cutoff) setType3Cutoff(d3.data.cutoff);
+        newType3Provider = d3.data.provider ?? '';
+        newType3Model    = d3.data.model    ?? '';
+        newType3Cutoff   = d3.data.cutoff   ?? '';
+        setType3Provider(newType3Provider);
+        setType3Model(newType3Model);
+        setType3Cutoff(newType3Cutoff);
+      }
+
+      // AI 모델 정보를 포함해서 즉시 저장
+      if (d2.success || d3.success) {
+        const t2 = d2.success && Array.isArray(d2.data?.combinations) ? d2.data.combinations : type2Numbers;
+        const t3 = d3.success && Array.isArray(d3.data?.combinations) ? d3.data.combinations : type3Numbers;
+        await fetch('/api/lotto/predicted', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type1: type1Numbers, type2: t2, type3: t3,
+            type2Provider: newType2Provider, type2Model: newType2Model, type2Cutoff: newType2Cutoff,
+            type3Provider: newType3Provider, type3Model: newType3Model, type3Cutoff: newType3Cutoff,
+          }),
+        });
       }
     } catch { setAiError('AI 서버 연결 오류'); }
     finally { setIsGeneratingAI(false); }
-  }, [conditions]);
+  }, [conditions, type1Numbers, type2Numbers, type3Numbers]);
 
   // ---------------------------------------------------------------------------
   // Section 3: Save all predictions to DB
@@ -600,10 +789,22 @@ export default function Home() {
                           </div>
                         </td>
                         <td className="border-b border-gray-100 px-2 py-1.5 text-center">
-                          <button onClick={() => executeCondition(row.id)} disabled={row.isLoading}
-                            className="inline-flex items-center gap-0.5 px-2 py-1 text-xs font-semibold bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-40 whitespace-nowrap">
-                            {row.isLoading ? <span className="inline-block w-2.5 h-2.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : '실행'}
-                          </button>
+                          <div className="flex items-center justify-center gap-1">
+                            <button onClick={() => executeCondition(row.id)} disabled={row.isLoading}
+                              className="inline-flex items-center gap-0.5 px-2 py-1 text-xs font-semibold bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-40 whitespace-nowrap">
+                              {row.isLoading ? <span className="inline-block w-2.5 h-2.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : '실행'}
+                            </button>
+                            <button
+                              onClick={() => openDistribution(row.id)}
+                              disabled={distLoadingIds.has(row.id)}
+                              className="inline-flex items-center gap-0.5 px-2 py-1 text-xs font-semibold bg-amber-500 text-white rounded hover:bg-amber-600 disabled:opacity-50 whitespace-nowrap"
+                              title="번호 분포도 보기"
+                            >
+                              {distLoadingIds.has(row.id)
+                                ? <span className="inline-block w-2.5 h-2.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                : '분포도'}
+                            </button>
+                          </div>
                         </td>
                         <td className="border-b border-gray-100 px-2 py-1.5 text-center whitespace-nowrap">
                           {row.roundsAnalyzed != null
@@ -613,7 +814,7 @@ export default function Home() {
                         {[0,1,2,3,4,5].map((idx) => (
                           <td key={idx} className="border-b border-gray-100 px-3 py-1.5 text-center">
                             {row.numbers != null
-                              ? <NumberBall num={row.numbers[idx]} size="sm" freq={row.frequencies != null ? row.frequencies[idx] : undefined} />
+                              ? <NumberBall num={row.numbers[idx]} size="sm" hoverFreq={row.frequencies != null ? row.frequencies[idx] : undefined} />
                               : <span className="text-gray-300 text-xs">-</span>}
                           </td>
                         ))}
@@ -771,6 +972,16 @@ export default function Home() {
         </div>
 
       </div>
+
+      {/* 분포도 팝업 */}
+      {distPopup && (
+        <DistributionPopup
+          distribution={distPopup.distribution}
+          conditionText={distPopup.conditionText}
+          roundsAnalyzed={distPopup.roundsAnalyzed}
+          onClose={() => setDistPopup(null)}
+        />
+      )}
     </main>
   );
 }
