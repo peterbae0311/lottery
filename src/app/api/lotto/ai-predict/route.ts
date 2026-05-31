@@ -1,253 +1,97 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import Groq from 'groq-sdk';
-import { createServerClient } from '@/lib/supabase';
 
-interface FreqMap { [num: number]: number }
+function weightedSample(count: number): number[] {
+  const pool: [number, number][] = [];
+  for (let i = 1; i <= 31; i++) pool.push([i, 1]);
+  for (let i = 32; i <= 45; i++) pool.push([i, 3]);
 
-class RateLimitError extends Error {
-  constructor(provider: string) { super(`RATE_LIMIT:${provider}`); }
-}
-class NoKeyError extends Error {}
+  const result: number[] = [];
+  const available = [...pool];
 
-async function getLottoFrequencies(): Promise<FreqMap> {
-  try {
-    const supabase = createServerClient();
-    const { data } = await supabase.from('lotto_results').select('num1,num2,num3,num4,num5,num6');
-    const freq: FreqMap = {};
-    for (let i = 1; i <= 45; i++) freq[i] = 0;
-    if (data) {
-      for (const row of data as { num1:number; num2:number; num3:number; num4:number; num5:number; num6:number }[]) {
-        for (const n of [row.num1, row.num2, row.num3, row.num4, row.num5, row.num6]) {
-          if (n >= 1 && n <= 45) freq[n] = (freq[n] ?? 0) + 1;
-        }
+  while (result.length < count && available.length > 0) {
+    const total = available.reduce((s, [, w]) => s + w, 0);
+    const r = Math.random() * total;
+    let cumulative = 0;
+    for (let i = 0; i < available.length; i++) {
+      cumulative += available[i][1];
+      if (r <= cumulative) {
+        result.push(available[i][0]);
+        available.splice(i, 1);
+        break;
       }
     }
-    return freq;
-  } catch {
-    const freq: FreqMap = {};
-    for (let i = 1; i <= 45; i++) freq[i] = 1;
-    return freq;
-  }
-}
-
-function freqSummary(freq: FreqMap): string {
-  return Object.entries(freq)
-    .sort(([a], [b]) => Number(a) - Number(b))
-    .map(([n, f]) => `${n}:${f}`)
-    .join(' ');
-}
-
-function distSummary(dist: number[]): string {
-  const labels = ['01~09', '10~19', '20~29', '30~39', '40~45'];
-  const total = dist.reduce((a, b) => a + b, 0);
-  return dist.map((v, i) => {
-    const pct = total > 0 ? Math.round((v / total) * 100) : 0;
-    return `${labels[i]}: ${v}회(${pct}%)`;
-  }).join(', ');
-}
-
-function buildPrompt(type: 2 | 3, combCount: number, freqStr: string, pool?: number[], distribution?: number[]): string {
-  const rolePrompt = `당신은 로또 번호 생성 전문 AI입니다. 다음 5가지 역할을 동시에 수행합니다:
-1. 데이터 분석가: 번호별 출현 빈도·패턴·시계열 분석
-2. 확률 모델러: 빈출(Hot)/미출현(Cold) 번호에 가중치 부여, 조건부 확률 계산
-3. 번호 생성기: 가중 랜덤 샘플링으로 다중 조합 병렬 생성
-4. 전략 조언가: 번호대 분산, 홀짝 균형, 합계 범위 최적화
-5. 결과 검증자: 합계 100~175, 비현실적 연속 번호 필터링, 다양성 점수 검증`;
-
-  const rules = `생성 규칙:
-- 각 조합: 6개의 서로 다른 번호, 오름차순 정렬
-- 번호 합계: 100~175 범위
-- 홀수 2~4개 (홀짝 균형)
-- 번호대(1~9, 10~19, 20~29, 30~39, 40~45) 가급적 분산
-- 연속 번호 최대 2개
-- 조합 간 유사성 제거: 어떤 두 조합도 4개 이상의 번호를 공유하면 안 됨 (최대 3개 공유 허용)`;
-
-  const jsonExample = Array.from({ length: combCount }, () => '[n,n,n,n,n,n]').join(',');
-  const distBlock = distribution && distribution.length === 5
-    ? `\n번호대별 분포 현황: ${distSummary(distribution)}`
-    : '';
-
-  if (type === 2 && pool) {
-    return `${rolePrompt}
-
-역대 번호별 출현 빈도 (번호:횟수): ${freqStr}${distBlock}
-
-섹션2 분석 결과 고빈도 번호 풀: [${pool.join(', ')}]
-이 번호 풀에서만 선택하여 조합 ${combCount}개를 생성하세요.
-
-${rules}
-
-반드시 JSON만 응답 (설명 없이):
-{"combinations":[${jsonExample}]}`;
-  }
-
-  return `${rolePrompt}
-
-역대 번호별 출현 빈도 (번호:횟수): ${freqStr}${distBlock}
-
-1~45 전체 번호를 대상으로 통계 분석과 확률 모델링을 적용하여 최적 조합 ${combCount}개를 생성하세요.
-빈출(Hot) 번호와 장기 미출현(Cold) 번호를 적절히 혼합하세요.
-
-${rules}
-
-반드시 JSON만 응답 (설명 없이):
-{"combinations":[${jsonExample}]}`;
-}
-
-function parseText(text: string, combCount: number): number[][] {
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error('AI 응답 파싱 실패');
-  const result = JSON.parse(jsonMatch[0]) as { combinations: number[][] };
-  return result.combinations
-    .slice(0, combCount)
-    .map(combo => [...new Set(combo.filter((n: number) => n >= 1 && n <= 45))].sort((a, b) => a - b))
-    .filter(combo => combo.length === 6);
-}
-
-function sharedCount(a: number[], b: number[]): number {
-  const setB = new Set(b);
-  return a.filter(n => setB.has(n)).length;
-}
-
-function randomCombo(pool: number[]): number[] {
-  const shuffled = [...pool].sort(() => Math.random() - 0.5);
-  return shuffled.slice(0, 6).sort((a, b) => a - b);
-}
-
-function ensureDiversity(combos: number[][], targetCount: number, pool: number[], maxShared = 3): number[][] {
-  const result: number[][] = [];
-  for (const combo of combos) {
-    if (result.length >= targetCount) break;
-    if (!result.some(r => sharedCount(combo, r) > maxShared)) result.push(combo);
-  }
-  let attempts = 0;
-  while (result.length < targetCount && attempts < 2000) {
-    attempts++;
-    const candidate = randomCombo(pool);
-    if (candidate.length === 6 && !result.some(r => sharedCount(candidate, r) > maxShared))
-      result.push(candidate);
   }
   return result;
 }
 
-function isRateLimit(err: unknown): boolean {
-  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
-  return msg.includes('429') || msg.includes('rate') || msg.includes('quota') || msg.includes('limit');
-}
+function isValid(combo: number[], lastDrawSet: Set<number>): boolean {
+  const sum = combo.reduce((a, b) => a + b, 0);
+  if (sum < 100 || sum > 175) return false;
 
-async function callGemini(prompt: string): Promise<string> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new NoKeyError();
-  try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
-    const result = await model.generateContent(prompt);
-    return result.response.text();
-  } catch (err) {
-    if (isRateLimit(err)) throw new RateLimitError('Gemini');
-    throw err;
+  const oddCount = combo.filter(n => n % 2 === 1).length;
+  if (oddCount < 2 || oddCount > 4) return false;
+
+  if (combo.filter(n => n <= 31).length > 3) return false;
+
+  // Max 2 consecutive
+  let consec = 1, maxConsec = 1;
+  for (let i = 1; i < combo.length; i++) {
+    if (combo[i] - combo[i - 1] === 1) { consec++; maxConsec = Math.max(maxConsec, consec); }
+    else consec = 1;
   }
-}
+  if (maxConsec > 2) return false;
 
-async function callGroq(prompt: string): Promise<string> {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) throw new NoKeyError();
-  try {
-    const client = new Groq({ apiKey });
-    const completion = await client.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      max_tokens: 300,
-      messages: [{ role: 'user', content: prompt }],
-    });
-    return completion.choices[0]?.message?.content ?? '';
-  } catch (err) {
-    if (isRateLimit(err)) throw new RateLimitError('Groq');
-    throw err;
+  // No 3-term AP with gap ≤ 5
+  for (let i = 0; i < combo.length - 2; i++) {
+    const g1 = combo[i + 1] - combo[i];
+    const g2 = combo[i + 2] - combo[i + 1];
+    if (g1 === g2 && g1 <= 5) return false;
   }
+
+  // 끝자리 분산: 같은 끝자리 숫자 최대 2개
+  const tailMap: Record<number, number> = {};
+  for (const n of combo) {
+    const tail = n % 10;
+    tailMap[tail] = (tailMap[tail] ?? 0) + 1;
+    if (tailMap[tail] > 2) return false;
+  }
+
+  // 직전 회차 제외: 직전 당첨번호와 4개 이상 겹치면 제외
+  if (lastDrawSet.size > 0) {
+    const shared = combo.filter(n => lastDrawSet.has(n)).length;
+    if (shared >= 4) return false;
+  }
+
+  return true;
 }
 
-async function callOpenRouter(prompt: string): Promise<string> {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) throw new NoKeyError();
-  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'meta-llama/llama-3.1-8b-instruct:free',
-      max_tokens: 300,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  });
-  if (res.status === 429) throw new RateLimitError('OpenRouter');
-  if (!res.ok) throw new Error(`OpenRouter ${res.status}`);
-  const data = await res.json() as { choices: { message: { content: string } }[] };
-  return data.choices[0]?.message?.content ?? '';
+function sharedCount(a: number[], b: number[]): number {
+  const s = new Set(b);
+  return a.filter(n => s.has(n)).length;
 }
 
-async function callAnthropic(prompt: string): Promise<string> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new NoKeyError();
-  const { default: Anthropic } = await import('@anthropic-ai/sdk');
-  const client = new Anthropic({ apiKey });
-  const message = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 300,
-    messages: [{ role: 'user', content: prompt }],
-  });
-  const content = message.content[0];
-  return content.type === 'text' ? content.text : '';
+function generateCombinations(count: number, lastDrawSet: Set<number>): number[][] {
+  const results: number[][] = [];
+  for (let attempt = 0; attempt < 10000 && results.length < count; attempt++) {
+    const raw = weightedSample(6).sort((a, b) => a - b);
+    if (isValid(raw, lastDrawSet) && !results.some(r => sharedCount(raw, r) > 3)) {
+      results.push(raw);
+    }
+  }
+  return results;
 }
-
-const PROVIDERS = [
-  { name: 'Gemini',      model: 'gemini-2.0-flash-lite',              cutoff: '2024년 8월',  fn: callGemini },
-  { name: 'Groq',        model: 'llama-3.3-70b-versatile',            cutoff: '2023년 12월', fn: callGroq },
-  { name: 'OpenRouter',  model: 'llama-3.1-8b-instruct',              cutoff: '2023년 3월',  fn: callOpenRouter },
-  { name: 'Anthropic',   model: 'claude-haiku-4-5',                   cutoff: '2025년 4월',  fn: callAnthropic },
-];
 
 export async function POST(req: NextRequest) {
-  let body: { type: 2 | 3; section2Numbers?: number[][]; distribution?: number[] };
-  try { body = await req.json(); } catch {
-    return NextResponse.json({ success: false, error: '잘못된 요청 형식입니다.' }, { status: 400 });
-  }
+  let body: { lastDrawNumbers?: number[] } = {};
+  try { body = await req.json(); } catch { /* no body */ }
 
-  const combCount = body.type === 2 ? 4 : 5;
-  let pool: number[] | undefined;
-
-  if (body.type === 2) {
-    pool = [...new Set((body.section2Numbers ?? []).flat().filter(n => n >= 1 && n <= 45))].sort((a, b) => a - b);
-    if (pool.length < 6) {
-      return NextResponse.json({ success: false, error: '섹션2 데이터가 부족합니다. 조건을 실행해주세요.' }, { status: 422 });
-    }
-  }
-
-  const freq = await getLottoFrequencies();
-  const distribution = body.distribution && body.distribution.length === 5 ? body.distribution : undefined;
-  const prompt = buildPrompt(body.type, combCount, freqSummary(freq), pool, distribution);
-
-  const fullPool = pool ?? Array.from({ length: 45 }, (_, i) => i + 1);
-  const errors: string[] = [];
-
-  for (const { name, model, cutoff, fn } of PROVIDERS) {
-    try {
-      const text = await fn(prompt);
-      const raw = parseText(text, combCount);
-      if (raw.length === 0) throw new Error('유효한 조합 없음');
-      const combinations = ensureDiversity(raw, combCount, fullPool);
-      return NextResponse.json({ success: true, data: { combinations, provider: name, model, cutoff } });
-    } catch (err) {
-      if (err instanceof NoKeyError) continue;
-      if (err instanceof RateLimitError) { errors.push(`${name}: rate limit`); continue; }
-      errors.push(`${name}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
-  return NextResponse.json(
-    { success: false, error: `모든 AI 서비스 실패 (${errors.join(' / ')})` },
-    { status: 503 }
+  const lastDrawSet = new Set<number>(
+    (body.lastDrawNumbers ?? []).filter(n => typeof n === 'number' && n >= 1 && n <= 45)
   );
+
+  const combinations = generateCombinations(5, lastDrawSet);
+  if (combinations.length === 0) {
+    return NextResponse.json({ success: false, error: '조합 생성 실패' }, { status: 500 });
+  }
+  return NextResponse.json({ success: true, data: { combinations } });
 }

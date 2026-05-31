@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -75,21 +75,6 @@ function parseConditionText(text: string): { conditionType: ConditionType; years
   return { conditionType: 1, years: yearMatch ? parseInt(yearMatch[1]) : 0, months: monthMatch ? parseInt(monthMatch[1]) : 0, maxWinners: 0, maxPrizeAmt: 0 };
 }
 
-function getTopSixFromNumberSets(numberSets: number[][]): { numbers: number[]; frequencies: number[] } {
-  const freq: Record<number, number> = {};
-  for (const set of numberSets) {
-    for (const num of set) {
-      if (typeof num === 'number' && num >= 1 && num <= 45) {
-        freq[num] = (freq[num] ?? 0) + 1;
-      }
-    }
-  }
-  const top6 = Object.entries(freq)
-    .map(([num, count]) => ({ num: Number(num), count }))
-    .sort((a, b) => b.count - a.count || a.num - b.num)
-    .slice(0, 6);
-  return { numbers: top6.map((x) => x.num), frequencies: top6.map((x) => x.count) };
-}
 
 const BLANK_ROW = { roundsAnalyzed: null, numbers: null, frequencies: null, distribution: null, isLoading: false };
 const DEFAULT_CONDITIONS: ConditionRow[] = [
@@ -104,25 +89,28 @@ const DEFAULT_CONDITIONS: ConditionRow[] = [
 // NumberBall
 // ---------------------------------------------------------------------------
 
-function NumberBall({ num, size = 'md', freq, hoverFreq }: { num: number | null; size?: 'sm' | 'md' | 'lg'; freq?: number; hoverFreq?: number }) {
+function getLottoColor(num: number): string {
+  if (num <= 10) return 'bg-yellow-400 text-white';
+  if (num <= 20) return 'bg-blue-500 text-white';
+  if (num <= 30) return 'bg-red-500 text-white';
+  if (num <= 40) return 'bg-slate-500 text-white';
+  return 'bg-green-500 text-white';
+}
+
+function NumberBall({ num, size = 'md', freq, hoverFreq, highlighted }: { num: number | null; size?: 'sm' | 'md' | 'lg'; freq?: number; hoverFreq?: number; highlighted?: boolean }) {
   if (num == null) {
     const dim = size === 'lg' ? 'w-12 h-12 text-base' : size === 'sm' ? 'w-8 h-8 text-sm' : 'w-10 h-10 text-sm';
     return <span className={`inline-flex items-center justify-center ${dim} rounded-full bg-gray-100 text-gray-400 font-bold`}>-</span>;
   }
 
-  let colorClass = '';
-  if (num <= 10) colorClass = 'bg-yellow-400 text-white';
-  else if (num <= 20) colorClass = 'bg-blue-500 text-white';
-  else if (num <= 30) colorClass = 'bg-red-500 text-white';
-  else if (num <= 40) colorClass = 'bg-orange-500 text-white';
-  else colorClass = 'bg-green-500 text-white';
+  const colorClass = highlighted ? getLottoColor(num) : 'bg-white border border-gray-300 text-gray-500';
 
   if (freq != null) {
     const dim = size === 'lg' ? 'w-14 h-14' : size === 'sm' ? 'w-10 h-10' : 'w-12 h-12';
     const numText = size === 'lg' ? 'text-base' : size === 'sm' ? 'text-xs' : 'text-sm';
     const freqText = size === 'lg' ? 'text-[10px]' : 'text-[9px]';
     return (
-      <span className={`inline-flex flex-col items-center justify-center ${dim} rounded-full ${colorClass} font-bold shadow-sm leading-none gap-0.5`}>
+      <span className={`inline-flex flex-col items-center justify-center ${dim} rounded-full ${colorClass} font-bold leading-none gap-0.5`}>
         <span className={numText}>{String(num).padStart(2, '0')}</span>
         <span className={`${freqText} opacity-80`}>{freq}회</span>
       </span>
@@ -131,7 +119,7 @@ function NumberBall({ num, size = 'md', freq, hoverFreq }: { num: number | null;
 
   const dim = size === 'lg' ? 'w-12 h-12 text-base' : size === 'sm' ? 'w-8 h-8 text-sm' : 'w-10 h-10 text-sm';
   const ball = (
-    <span className={`inline-flex items-center justify-center ${dim} rounded-full ${colorClass} font-bold shadow-sm`}>
+    <span className={`inline-flex items-center justify-center ${dim} rounded-full ${colorClass} font-bold`}>
       {String(num).padStart(2, '0')}
     </span>
   );
@@ -231,16 +219,77 @@ function DistributionPopup({
 }
 
 // ---------------------------------------------------------------------------
+// Icons
+// ---------------------------------------------------------------------------
+
+const IconList = () => (
+  <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+    <circle cx="3" cy="6" r="0.5" fill="currentColor" stroke="none"/>
+    <circle cx="3" cy="12" r="0.5" fill="currentColor" stroke="none"/>
+    <circle cx="3" cy="18" r="0.5" fill="currentColor" stroke="none"/>
+  </svg>
+);
+
+const IconBarChart = () => (
+  <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/>
+    <line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/>
+  </svg>
+);
+
+const IconDice = ({ size = 'sm' }: { size?: 'sm' | 'md' }) => (
+  <svg className={size === 'md' ? 'w-3.5 h-3.5' : 'w-3 h-3'} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="3" width="18" height="18" rx="3"/>
+    <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" stroke="none"/>
+    <circle cx="15.5" cy="8.5" r="1.5" fill="currentColor" stroke="none"/>
+    <circle cx="8.5" cy="15.5" r="1.5" fill="currentColor" stroke="none"/>
+    <circle cx="15.5" cy="15.5" r="1.5" fill="currentColor" stroke="none"/>
+  </svg>
+);
+
+// ---------------------------------------------------------------------------
 // SectionHeader
 // ---------------------------------------------------------------------------
 
-function SectionHeader({ step, title }: { step: number; title: string }) {
+function SectionHeader({ icon, title, small }: { icon: ReactNode; title: string; small?: boolean }) {
   return (
-    <div className="flex items-center gap-3">
-      <span className="flex-shrink-0 inline-flex items-center justify-center w-8 h-8 rounded-full bg-indigo-600 text-white text-sm font-bold">{step}</span>
-      <h2 className="text-xl font-bold text-gray-800 tracking-tight">{title}</h2>
+    <div className="flex items-center gap-2">
+      <span className={`flex-shrink-0 inline-flex items-center justify-center ${small ? 'w-6 h-6' : 'w-8 h-8'} rounded-full bg-indigo-600 text-white`}>{icon}</span>
+      <h2 className={`${small ? 'text-sm' : 'text-xl'} font-bold text-gray-800 tracking-tight`}>{title}</h2>
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Prize tier helpers
+// ---------------------------------------------------------------------------
+
+function getPrizeTier(matchCount: number, bonusMatch: boolean): string {
+  if (matchCount === 6) return '1등';
+  if (matchCount === 5 && bonusMatch) return '2등';
+  if (matchCount === 5) return '3등';
+  if (matchCount === 4) return '4등';
+  if (matchCount === 3) return '5등';
+  return '낙첨';
+}
+
+function getTierStyle(tier: string): string {
+  if (tier === '1등') return 'text-yellow-700 bg-yellow-100 border-yellow-200';
+  if (tier === '2등') return 'text-orange-700 bg-orange-100 border-orange-200';
+  if (tier === '3등') return 'text-red-700 bg-red-100 border-red-200';
+  if (tier === '4등') return 'text-blue-700 bg-blue-100 border-blue-200';
+  if (tier === '5등') return 'text-emerald-700 bg-emerald-100 border-emerald-200';
+  return 'text-gray-400 bg-gray-100 border-gray-200';
+}
+
+function getTierTextColor(tier: string): string {
+  if (tier === '1등') return 'text-yellow-700';
+  if (tier === '2등') return 'text-orange-700';
+  if (tier === '3등') return 'text-red-700';
+  if (tier === '4등') return 'text-blue-700';
+  if (tier === '5등') return 'text-emerald-700';
+  return 'text-gray-400';
 }
 
 // ---------------------------------------------------------------------------
@@ -256,19 +305,11 @@ export default function Home() {
   const [saveConditionsMsg, setSaveConditionsMsg] = useState('');
 
   // Section 3 state
-  const [type1Numbers, setType1Numbers] = useState<number[]>([]);
-  const [type1Freqs, setType1Freqs] = useState<number[]>([]);
-  const [type2Numbers, setType2Numbers] = useState<number[][]>([]);
   const [type3Numbers, setType3Numbers] = useState<number[][]>([]);
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
   const [aiError, setAiError] = useState('');
   const [isSavingPredicted, setIsSavingPredicted] = useState(false);
-  const [type2Provider, setType2Provider] = useState('');
-  const [type3Provider, setType3Provider] = useState('');
-  const [type2Model, setType2Model] = useState('');
-  const [type2Cutoff, setType2Cutoff] = useState('');
-  const [type3Model, setType3Model] = useState('');
-  const [type3Cutoff, setType3Cutoff] = useState('');
+  const [selectedRound, setSelectedRound] = useState<number | null>(null);
   // DB에서 불러온 직후 auto-save 방지용 플래그
   const skipSaveRef = useRef(false);
 
@@ -373,16 +414,7 @@ export default function Home() {
         const data = await res.json();
         if (data.success) {
           skipSaveRef.current = true;
-          if (Array.isArray(data.data.type1) && data.data.type1.length === 6) setType1Numbers(data.data.type1);
-          if (Array.isArray(data.data.type2) && data.data.type2.length > 0) setType2Numbers(data.data.type2);
           if (Array.isArray(data.data.type3) && data.data.type3.length > 0) setType3Numbers(data.data.type3);
-          if (data.data.type2Provider) setType2Provider(data.data.type2Provider);
-          if (data.data.type2Model)    setType2Model(data.data.type2Model);
-          if (data.data.type2Cutoff)   setType2Cutoff(data.data.type2Cutoff);
-          if (data.data.type3Provider) setType3Provider(data.data.type3Provider);
-          if (data.data.type3Model)    setType3Model(data.data.type3Model);
-          if (data.data.type3Cutoff)   setType3Cutoff(data.data.type3Cutoff);
-          // 다음 렌더 사이클 이후 플래그 해제
           setTimeout(() => { skipSaveRef.current = false; }, 0);
         }
       } catch { /* ignore */ }
@@ -522,208 +554,129 @@ export default function Home() {
   }, [conditions]);
 
   // ---------------------------------------------------------------------------
-  // Section 3: Type 1 — auto recompute from Section 2
+  // Section 3: AI generation (Type 3)
   // ---------------------------------------------------------------------------
 
-  useEffect(() => {
-    const executedSets = conditions.filter((c) => c.numbers !== null && c.numbers.length === 6).map((c) => c.numbers as number[]);
-    if (executedSets.length === 0) { setType1Numbers([]); setType1Freqs([]); return; }
-    const { numbers, frequencies } = getTopSixFromNumberSets(executedSets);
-    setType1Numbers(numbers);
-    setType1Freqs(frequencies);
-  }, [conditions]);
-
-  // ---------------------------------------------------------------------------
-  // Section 3: AI generation (Types 2 & 3)
-  // ---------------------------------------------------------------------------
-
-  const generateAIPredictions = useCallback(async () => {
+  const generateAIPredictions = useCallback(async (targetRound?: number) => {
     setIsGeneratingAI(true);
     setAiError('');
-    setType2Provider(''); setType2Model(''); setType2Cutoff('');
-    setType3Provider(''); setType3Model(''); setType3Cutoff('');
-
-    const executedConditions = conditions.filter((c) => c.numbers !== null && c.numbers.length === 6);
-    const section2Numbers = executedConditions.map((c) => c.numbers as number[]);
-
-    // 조건별 분포도를 집계하여 AI input으로 사용
-    const aggDist = [0, 0, 0, 0, 0];
-    for (const c of executedConditions) {
-      if (c.distribution && c.distribution.length === 5) {
-        c.distribution.forEach((v, i) => { aggDist[i] += v; });
-      }
-    }
-    const distribution = aggDist.some(v => v > 0) ? aggDist : undefined;
-
+    // Find the round prior to targetRound for the 직전 회차 제외 rule
+    const targetIdx = targetRound != null
+      ? results.findIndex(r => r.round === targetRound)
+      : 0;
+    const prevResult = targetIdx >= 0 && targetIdx + 1 < results.length ? results[targetIdx + 1] : null;
+    const lastDrawNumbers = prevResult
+      ? [prevResult.num1, prevResult.num2, prevResult.num3, prevResult.num4, prevResult.num5, prevResult.num6]
+          .filter((n): n is number => n !== null)
+      : [];
     try {
-      const [res2, res3] = await Promise.all([
-        fetch('/api/lotto/ai-predict', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: 2, section2Numbers, distribution }),
-        }),
-        fetch('/api/lotto/ai-predict', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: 3, distribution }),
-        }),
-      ]);
-      const [d2, d3] = await Promise.all([res2.json(), res3.json()]);
-
-      let newType2Provider = '', newType2Model = '', newType2Cutoff = '';
-      let newType3Provider = '', newType3Model = '', newType3Cutoff = '';
-      let newType2: number[][] = type2Numbers;
-      let newType3: number[][] = type3Numbers;
-
-      if (d2.success && Array.isArray(d2.data?.combinations)) {
-        newType2 = d2.data.combinations;
-        newType2Provider = d2.data.provider ?? '';
-        newType2Model    = d2.data.model    ?? '';
-        newType2Cutoff   = d2.data.cutoff   ?? '';
-      } else {
-        setAiError(d2.error ?? 'AI 생성 오류');
-      }
-      if (d3.success && Array.isArray(d3.data?.combinations)) {
-        newType3 = d3.data.combinations;
-        newType3Provider = d3.data.provider ?? '';
-        newType3Model    = d3.data.model    ?? '';
-        newType3Cutoff   = d3.data.cutoff   ?? '';
-      }
-
-      // 자동-저장 effect가 모델 정보 없이 덮어쓰지 않도록 차단
-      skipSaveRef.current = true;
-
-      setType2Numbers(newType2);
-      setType2Provider(newType2Provider);
-      setType2Model(newType2Model);
-      setType2Cutoff(newType2Cutoff);
-      setType3Numbers(newType3);
-      setType3Provider(newType3Provider);
-      setType3Model(newType3Model);
-      setType3Cutoff(newType3Cutoff);
-
-      // 모델 정보 포함하여 명시적으로 저장
-      await fetch('/api/lotto/predicted', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type1: type1Numbers, type2: newType2, type3: newType3,
-          type2Provider: newType2Provider, type2Model: newType2Model, type2Cutoff: newType2Cutoff,
-          type3Provider: newType3Provider, type3Model: newType3Model, type3Cutoff: newType3Cutoff,
-        }),
+      const res = await fetch('/api/lotto/ai-predict', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lastDrawNumbers }),
       });
-
-      // 저장 완료 후 자동-저장 재개
-      setTimeout(() => { skipSaveRef.current = false; }, 0);
-
-    } catch { setAiError('AI 서버 연결 오류'); }
+      const d = await res.json();
+      if (d.success && Array.isArray(d.data?.combinations)) {
+        skipSaveRef.current = true;
+        setType3Numbers(d.data.combinations);
+        await fetch('/api/lotto/predicted', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type3: d.data.combinations }),
+        });
+        setTimeout(() => { skipSaveRef.current = false; }, 0);
+      } else {
+        setAiError(d.error ?? '조합 생성 오류');
+      }
+    } catch { setAiError('서버 연결 오류'); }
     finally { setIsGeneratingAI(false); }
-  }, [conditions, type1Numbers, type2Numbers, type3Numbers]);
+  }, [results]);
 
   // ---------------------------------------------------------------------------
   // Section 3: Save all predictions to DB
   // ---------------------------------------------------------------------------
 
-  const savePredictions = useCallback(async (t1: number[], t2: number[][], t3: number[][]) => {
-    if (t1.length !== 6 && t2.length === 0 && t3.length === 0) return;
+  const savePredictions = useCallback(async (t3: number[][]) => {
+    if (t3.length === 0) return;
     setIsSavingPredicted(true);
     try {
       await fetch('/api/lotto/predicted', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type1: t1, type2: t2, type3: t3 }),
+        body: JSON.stringify({ type3: t3 }),
       });
     } catch { /* ignore */ }
     finally { setIsSavingPredicted(false); }
   }, []);
 
-  // Auto-save type1 when it changes
+  // Auto-save type3 when it changes
   useEffect(() => {
     if (skipSaveRef.current) return;
-    if (type1Numbers.length === 6) savePredictions(type1Numbers, type2Numbers, type3Numbers);
-  }, [type1Numbers]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (type3Numbers.length > 0) savePredictions(type3Numbers);
+  }, [type3Numbers]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Save all when AI finishes
-  useEffect(() => {
-    if (skipSaveRef.current) return;
-    if (type2Numbers.length > 0 || type3Numbers.length > 0) {
-      savePredictions(type1Numbers, type2Numbers, type3Numbers);
-    }
-  }, [type2Numbers, type3Numbers]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Refresh button: regenerate type1 from current section2 + call AI
   const refreshAll = useCallback(async () => {
-    const executedSets = conditions.filter((c) => c.numbers !== null && c.numbers.length === 6).map((c) => c.numbers as number[]);
-    if (executedSets.length > 0) {
-      const { numbers, frequencies } = getTopSixFromNumberSets(executedSets);
-      setType1Numbers(numbers);
-      setType1Freqs(frequencies);
-    }
-    await generateAIPredictions();
-  }, [conditions, generateAIPredictions]);
+    await generateAIPredictions(selectedRound ?? undefined);
+  }, [generateAIPredictions, selectedRound]);
 
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
 
   return (
-    <main className="w-full h-screen overflow-hidden bg-gray-50 font-sans">
-      <div className="flex gap-0 h-full">
+    <main className="w-full bg-gray-50 md:h-screen md:overflow-hidden">
+      <div className="flex flex-col md:flex-row md:h-full">
 
-        {/* ===== LEFT 70% ===== */}
-        <div className="flex-[7] min-w-0 flex flex-col overflow-hidden">
+        {/* ===== LEFT: Sections 1 & 2 ===== */}
+        <div className="flex flex-col md:flex-[6] md:min-w-0 md:overflow-hidden">
 
           {/* SECTION 1 */}
-          <section className="flex-[2] min-h-0 flex flex-col bg-white border-b border-r border-gray-200 shadow-sm">
+          <section className="flex flex-col bg-white border-b border-gray-200 shadow-sm md:flex-[2] md:min-h-0 md:border-r">
             <div className="flex-none px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-              <SectionHeader step={1} title="로또 1등 당첨 번호" />
+              <SectionHeader icon={<IconList />} title="참고) 로또 당첨 번호" small />
               <div className="flex items-center gap-2">
                 {isSyncing
                   ? <span className="inline-flex items-center gap-1.5 text-sm text-indigo-600 font-medium"><span className="inline-block w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />동기화 중...</span>
                   : syncMessage ? <span className="text-xs text-gray-400">{syncMessage}</span> : null}
               </div>
             </div>
-            <div className="flex-1 overflow-y-auto">
-                <table className="w-full border-separate border-spacing-0 text-sm">
-                  <thead className="sticky top-0 z-10" style={{ boxShadow: '0 2px 0 #a5b4fc' }}>
-                    <tr className="bg-indigo-50">
-                      <th rowSpan={2} className="border-b border-indigo-200 px-3 py-1.5 text-center text-xs font-semibold text-indigo-700 whitespace-nowrap align-middle">회차</th>
-                      <th rowSpan={2} className="border-b border-indigo-200 px-3 py-1.5 text-center text-xs font-semibold text-indigo-700 whitespace-nowrap align-middle">추첨일</th>
-                      <th colSpan={6} className="border-b border-indigo-200 px-2 py-1.5 text-center text-xs font-semibold text-indigo-700">당첨번호</th>
-                      <th className="border-b border-l-2 border-indigo-200 border-l-indigo-200 px-2 py-1.5 text-center text-xs font-semibold text-indigo-700">보너스</th>
-                      <th rowSpan={2} className="border-b border-l-2 border-indigo-200 border-l-indigo-200 px-2 py-1.5 text-center text-xs font-semibold text-indigo-700 whitespace-nowrap align-middle">당첨자</th>
-                      <th rowSpan={2} className="border-b border-indigo-200 px-2 py-1.5 text-center text-xs font-semibold text-indigo-700 whitespace-nowrap align-middle">당첨금</th>
-                    </tr>
-                    <tr className="bg-indigo-50">
-                      {[1,2,3,4,5,6].map((n) => (
-                        <th key={`wn${n}`} className="border-b border-indigo-200 px-2 py-1 text-center text-xs font-medium text-indigo-500">#{n}</th>
+            <div className="overflow-x-auto overflow-y-auto max-h-56 md:max-h-none md:flex-1">
+              <table className="w-full border-separate border-spacing-0 text-sm min-w-[560px]">
+                <thead className="sticky top-0 z-10" style={{ boxShadow: '0 2px 0 #a5b4fc' }}>
+                  <tr className="bg-indigo-50">
+                    <th className="border-b border-indigo-200 px-3 py-1.5 text-center text-xs font-semibold text-indigo-700 whitespace-nowrap">회차</th>
+                    <th className="border-b border-indigo-200 px-3 py-1.5 text-center text-xs font-semibold text-indigo-700 whitespace-nowrap">추첨일</th>
+                    <th colSpan={6} className="border-b border-indigo-200 px-2 py-1.5 text-center text-xs font-semibold text-indigo-700">당첨번호</th>
+                    <th className="border-b border-l-2 border-indigo-200 border-l-indigo-200 px-2 py-1.5 text-center text-xs font-semibold text-indigo-700">보너스</th>
+                    <th className="border-b border-l-2 border-indigo-200 border-l-indigo-200 px-2 py-1.5 text-center text-xs font-semibold text-indigo-700 whitespace-nowrap">당첨자</th>
+                    <th className="border-b border-indigo-200 px-2 py-1.5 text-center text-xs font-semibold text-indigo-700 whitespace-nowrap">당첨금</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {results.length === 0 && (
+                    <tr><td colSpan={10} className="px-4 py-8 text-center text-sm text-gray-400">{isSyncing ? '데이터를 불러오는 중입니다...' : '데이터가 없습니다.'}</td></tr>
+                  )}
+                  {results.map((row, i) => (
+                    <tr key={row.id} className={`${i % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-indigo-50 transition-colors`}>
+                      <td className="border-b border-r border-gray-200 px-3 py-1 text-center text-sm font-medium text-gray-700 whitespace-nowrap">{String(row.round).padStart(5, '0')}</td>
+                      <td className="border-b border-r border-gray-200 px-3 py-1 text-center text-xs text-gray-500 whitespace-nowrap">{row.draw_date}</td>
+                      {[row.num1, row.num2, row.num3, row.num4, row.num5, row.num6].map((num, idx) => (
+                        <td key={idx} className="border-b border-r border-gray-200 px-2 py-1 text-center"><NumberBall num={num} size="sm" /></td>
                       ))}
-                      <th className="border-b border-indigo-200 border-l-2 border-l-indigo-200 px-2 py-1 text-center text-xs font-medium text-indigo-500">#1</th>
+                      <td className="border-b border-r border-l-2 border-gray-200 border-l-indigo-200 px-2 py-1 text-center"><NumberBall num={row.bonus1} size="sm" /></td>
+                      <td className="border-b border-r border-l-2 border-gray-200 border-l-indigo-200 px-2 py-1 text-center text-xs text-gray-600 whitespace-nowrap">
+                        {row.first_prize_winners != null ? <span className="font-medium">{row.first_prize_winners}명</span> : '-'}
+                      </td>
+                      <td className="border-b border-gray-200 px-2 py-1 text-right text-xs text-gray-700 whitespace-nowrap font-medium">{formatAmount(row.first_prize_amount)}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {results.length === 0 && (
-                      <tr><td colSpan={10} className="px-4 py-8 text-center text-sm text-gray-400">{isSyncing ? '데이터를 불러오는 중입니다...' : '데이터가 없습니다.'}</td></tr>
-                    )}
-                    {results.map((row, i) => (
-                      <tr key={row.id} className={`${i % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-indigo-50 transition-colors`}>
-                        <td className="border-b border-r border-gray-200 px-3 py-1 text-center text-sm font-medium text-gray-700 whitespace-nowrap">{String(row.round).padStart(5, '0')}</td>
-                        <td className="border-b border-r border-gray-200 px-3 py-1 text-center text-xs text-gray-500 whitespace-nowrap">{row.draw_date}</td>
-                        {[row.num1, row.num2, row.num3, row.num4, row.num5, row.num6].map((num, idx) => (
-                          <td key={idx} className="border-b border-r border-gray-200 px-2 py-1 text-center"><NumberBall num={num} size="sm" /></td>
-                        ))}
-                        <td className="border-b border-r border-l-2 border-gray-200 border-l-indigo-200 px-2 py-1 text-center"><NumberBall num={row.bonus1} size="sm" /></td>
-                        <td className="border-b border-r border-l-2 border-gray-200 border-l-indigo-200 px-2 py-1 text-center text-xs text-gray-600 whitespace-nowrap">
-                          {row.first_prize_winners != null ? <span className="font-medium">{row.first_prize_winners}명</span> : '-'}
-                        </td>
-                        <td className="border-b border-gray-200 px-2 py-1 text-right text-xs text-gray-700 whitespace-nowrap font-medium">{formatAmount(row.first_prize_amount)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </section>
 
           {/* SECTION 2 */}
-          <section className="flex-[3] min-h-0 flex flex-col bg-white border-r border-gray-200 shadow-sm overflow-hidden">
+          <section className="flex flex-col bg-white border-b border-gray-200 shadow-sm md:flex-[3] md:min-h-0 md:border-r md:overflow-hidden">
             <div className="flex-none px-4 py-3 border-b border-gray-100 flex items-center justify-between flex-wrap gap-2">
-              <SectionHeader step={2} title="조건별 당첨 번호 추출" />
+              <SectionHeader icon={<IconBarChart />} title="참고) 당첨 빈도 분석" small />
               <div className="flex items-center gap-2">
                 {saveConditionsMsg && (
                   <span className={`text-xs font-medium ${saveConditionsMsg.includes('완료') ? 'text-emerald-600' : 'text-red-500'}`}>{saveConditionsMsg}</span>
@@ -734,244 +687,244 @@ export default function Home() {
                 </button>
               </div>
             </div>
-
-            <div className="flex-1 min-h-0 overflow-hidden">
-              <div className="h-full overflow-y-auto">
-                <table className="w-full border-separate border-spacing-0 text-xs">
-                  <thead className="sticky top-0 z-10" style={{ boxShadow: '0 2px 0 #6ee7b7' }}>
-                    <tr className="bg-emerald-50">
-                      <th className="border-b border-emerald-100 px-3 py-2 text-left text-xs font-semibold text-emerald-700 bg-emerald-50">조건</th>
-                      <th className="border-b border-emerald-100 px-2 py-2 text-center text-xs font-semibold text-emerald-700 whitespace-nowrap bg-emerald-50">실행</th>
-                      <th className="border-b border-emerald-100 px-2 py-2 text-center text-xs font-semibold text-emerald-700 whitespace-nowrap bg-emerald-50">분석 회차</th>
-                      {[1,2,3,4,5,6].map((n) => (
-                        <th key={`cn${n}`} className="border-b border-emerald-100 px-3 py-2 text-center text-xs font-medium text-emerald-600 bg-emerald-50">#{n}</th>
-                      ))}
-                      <th className="border-b border-emerald-100 px-2 py-2 text-center text-xs font-semibold text-emerald-700 bg-emerald-50">관리</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {conditions.map((row, i) => (
-                      <tr key={row.id} className={`${i % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-emerald-50 transition-colors`}>
-                        {/* Condition cell — single line */}
-                        <td className="border-b border-gray-100 px-3 py-1.5">
-                          <div className="flex items-center gap-1.5 text-xs text-gray-600 whitespace-nowrap">
-                            <select value={row.conditionType} onChange={(e) => updateConditionType(row.id, Number(e.target.value) as ConditionType)}
-                              className="border border-gray-200 rounded px-1 py-0.5 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-emerald-400">
-                              <option value={1}>기간</option>
-                              <option value={2}>당첨자</option>
-                              <option value={3}>당첨금</option>
-                            </select>
-                            {row.conditionType === 1 && (
-                              <>
-                                <select value={row.years} onChange={(e) => updateYears(row.id, Number(e.target.value))}
-                                  className="border border-gray-200 rounded px-1 py-0.5 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-emerald-400">
-                                  <option value={0}>-</option>
-                                  {Array.from({ length: 20 }, (_, i) => i + 1).map((y) => <option key={y} value={y}>{y}</option>)}
-                                </select>
-                                <span>년</span>
-                                <select value={row.months} onChange={(e) => updateMonths(row.id, Number(e.target.value))}
-                                  className="border border-gray-200 rounded px-1 py-0.5 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-emerald-400">
-                                  <option value={0}>-</option>
-                                  {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => <option key={m} value={m}>{m}</option>)}
-                                </select>
-                                <span>개월</span>
-                                <span className="text-gray-400">
-                                  {row.years === 0 && row.months === 0 ? '전체' : '당첨번호 빈도 상위 6개'}
-                                </span>
-                              </>
-                            )}
-                            {row.conditionType === 2 && (
-                              <>
-                                <input type="number" min={1} value={row.maxWinners || ''} onChange={(e) => updateMaxWinners(row.id, Number(e.target.value))}
-                                  placeholder="명" className="border border-gray-200 rounded px-1 py-0.5 text-xs bg-white w-14 focus:outline-none focus:ring-1 focus:ring-emerald-400" />
-                                <span className="text-gray-400">명 미만 빈도 상위 6개</span>
-                              </>
-                            )}
-                            {row.conditionType === 3 && (
-                              <>
-                                <input type="number" min={1} value={row.maxPrizeAmt || ''} onChange={(e) => updateMaxPrizeAmt(row.id, Number(e.target.value))}
-                                  placeholder="억" className="border border-gray-200 rounded px-1 py-0.5 text-xs bg-white w-14 focus:outline-none focus:ring-1 focus:ring-emerald-400" />
-                                <span className="text-gray-400">억 이상 빈도 상위 6개</span>
-                              </>
-                            )}
-                          </div>
-                        </td>
-                        <td className="border-b border-gray-100 px-2 py-1.5 text-center">
-                          <div className="flex items-center justify-center gap-1">
-                            <button onClick={() => executeCondition(row.id)} disabled={row.isLoading}
-                              className="inline-flex items-center gap-0.5 px-2 py-1 text-xs font-semibold bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-40 whitespace-nowrap">
-                              {row.isLoading ? <span className="inline-block w-2.5 h-2.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : '실행'}
-                            </button>
-                            <button
-                              onClick={() => openDistribution(row.id)}
-                              disabled={distLoadingIds.has(row.id)}
-                              className="inline-flex items-center gap-0.5 px-2 py-1 text-xs font-semibold bg-amber-500 text-white rounded hover:bg-amber-600 disabled:opacity-50 whitespace-nowrap"
-                              title="번호 분포도 보기"
-                            >
-                              {distLoadingIds.has(row.id)
-                                ? <span className="inline-block w-2.5 h-2.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                : '분포도'}
-                            </button>
-                          </div>
-                        </td>
-                        <td className="border-b border-gray-100 px-2 py-1.5 text-center whitespace-nowrap">
-                          {row.roundsAnalyzed != null
-                            ? <span className="text-xs font-medium text-gray-600">{row.roundsAnalyzed.toLocaleString()}회</span>
+            <div className="overflow-x-auto overflow-y-auto max-h-72 md:max-h-none md:flex-1 md:min-h-0">
+              <table className="w-full border-separate border-spacing-0 text-xs min-w-[600px]">
+                <thead className="sticky top-0 z-10" style={{ boxShadow: '0 2px 0 #6ee7b7' }}>
+                  <tr className="bg-emerald-50">
+                    <th className="border-b border-emerald-100 px-3 py-2 text-left text-xs font-semibold text-emerald-700 bg-emerald-50">조건</th>
+                    <th className="border-b border-emerald-100 px-2 py-2 text-center text-xs font-semibold text-emerald-700 whitespace-nowrap bg-emerald-50">실행</th>
+                    <th className="border-b border-emerald-100 px-2 py-2 text-center text-xs font-semibold text-emerald-700 whitespace-nowrap bg-emerald-50">분석 회차</th>
+                    <th colSpan={6} className="border-b border-emerald-100 px-3 py-2 text-center text-xs font-medium text-emerald-600 bg-emerald-50">추출번호</th>
+                    <th className="border-b border-emerald-100 px-2 py-2 text-center text-xs font-semibold text-emerald-700 bg-emerald-50">관리</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {conditions.map((row, i) => (
+                    <tr key={row.id} className={`${i % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-emerald-50 transition-colors`}>
+                      <td className="border-b border-gray-100 px-3 py-1.5">
+                        <div className="flex items-center gap-1.5 text-xs text-gray-600 whitespace-nowrap">
+                          <select value={row.conditionType} onChange={(e) => updateConditionType(row.id, Number(e.target.value) as ConditionType)}
+                            className="border border-gray-200 rounded px-1 py-0.5 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-emerald-400">
+                            <option value={1}>기간</option>
+                            <option value={2}>당첨자</option>
+                            <option value={3}>당첨금</option>
+                          </select>
+                          {row.conditionType === 1 && (
+                            <>
+                              <select value={row.years} onChange={(e) => updateYears(row.id, Number(e.target.value))}
+                                className="border border-gray-200 rounded px-1 py-0.5 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-emerald-400">
+                                <option value={0}>-</option>
+                                {Array.from({ length: 20 }, (_, i) => i + 1).map((y) => <option key={y} value={y}>{y}</option>)}
+                              </select>
+                              <span>년</span>
+                              <select value={row.months} onChange={(e) => updateMonths(row.id, Number(e.target.value))}
+                                className="border border-gray-200 rounded px-1 py-0.5 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-emerald-400">
+                                <option value={0}>-</option>
+                                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => <option key={m} value={m}>{m}</option>)}
+                              </select>
+                              <span>개월</span>
+                              <span className="text-gray-400">
+                                {row.years === 0 && row.months === 0 ? '전체' : '당첨번호 빈도 상위 6개'}
+                              </span>
+                            </>
+                          )}
+                          {row.conditionType === 2 && (
+                            <>
+                              <input type="number" min={1} value={row.maxWinners || ''} onChange={(e) => updateMaxWinners(row.id, Number(e.target.value))}
+                                placeholder="명" className="border border-gray-200 rounded px-1 py-0.5 text-xs bg-white w-14 focus:outline-none focus:ring-1 focus:ring-emerald-400" />
+                              <span className="text-gray-400">명 미만 빈도 상위 6개</span>
+                            </>
+                          )}
+                          {row.conditionType === 3 && (
+                            <>
+                              <input type="number" min={1} value={row.maxPrizeAmt || ''} onChange={(e) => updateMaxPrizeAmt(row.id, Number(e.target.value))}
+                                placeholder="억" className="border border-gray-200 rounded px-1 py-0.5 text-xs bg-white w-14 focus:outline-none focus:ring-1 focus:ring-emerald-400" />
+                              <span className="text-gray-400">억 이상 빈도 상위 6개</span>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                      <td className="border-b border-gray-100 px-2 py-1.5 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <button onClick={() => executeCondition(row.id)} disabled={row.isLoading}
+                            className="inline-flex items-center gap-0.5 px-2 py-1 text-xs font-semibold bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-40 whitespace-nowrap">
+                            {row.isLoading ? <span className="inline-block w-2.5 h-2.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : '실행'}
+                          </button>
+                          <button
+                            onClick={() => openDistribution(row.id)}
+                            disabled={distLoadingIds.has(row.id)}
+                            className="inline-flex items-center gap-0.5 px-2 py-1 text-xs font-semibold bg-amber-500 text-white rounded hover:bg-amber-600 disabled:opacity-50 whitespace-nowrap"
+                            title="번호 분포도 보기"
+                          >
+                            {distLoadingIds.has(row.id)
+                              ? <span className="inline-block w-2.5 h-2.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                              : '분포도'}
+                          </button>
+                        </div>
+                      </td>
+                      <td className="border-b border-gray-100 px-2 py-1.5 text-center whitespace-nowrap">
+                        {row.roundsAnalyzed != null
+                          ? <span className="text-xs font-medium text-gray-600">{row.roundsAnalyzed.toLocaleString()}회</span>
+                          : <span className="text-gray-300 text-xs">-</span>}
+                      </td>
+                      {[0,1,2,3,4,5].map((idx) => (
+                        <td key={idx} className="border-b border-gray-100 px-3 py-1.5 text-center">
+                          {row.numbers != null
+                            ? <NumberBall num={row.numbers[idx]} size="sm" hoverFreq={row.frequencies != null ? row.frequencies[idx] : undefined} />
                             : <span className="text-gray-300 text-xs">-</span>}
                         </td>
-                        {[0,1,2,3,4,5].map((idx) => (
-                          <td key={idx} className="border-b border-gray-100 px-3 py-1.5 text-center">
-                            {row.numbers != null
-                              ? <NumberBall num={row.numbers[idx]} size="sm" hoverFreq={row.frequencies != null ? row.frequencies[idx] : undefined} />
-                              : <span className="text-gray-300 text-xs">-</span>}
-                          </td>
-                        ))}
-                        <td className="border-b border-gray-100 px-2 py-1.5 text-center whitespace-nowrap">
-                          <button onClick={addConditionRow} className="inline-flex items-center justify-center w-5 h-5 rounded-full text-emerald-600 hover:bg-emerald-100 font-bold text-sm" title="행 추가">+</button>
-                          <button onClick={() => removeConditionRow(row.id)} disabled={conditions.length <= 1}
-                            className="inline-flex items-center justify-center w-5 h-5 rounded-full text-red-400 hover:bg-red-50 font-bold text-sm disabled:opacity-25" title="행 삭제">-</button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                      ))}
+                      <td className="border-b border-gray-100 px-2 py-1.5 text-center whitespace-nowrap">
+                        <button onClick={addConditionRow} className="inline-flex items-center justify-center w-5 h-5 rounded-full text-emerald-600 hover:bg-emerald-100 font-bold text-sm" title="행 추가">+</button>
+                        <button onClick={() => removeConditionRow(row.id)} disabled={conditions.length <= 1}
+                          className="inline-flex items-center justify-center w-5 h-5 rounded-full text-red-400 hover:bg-red-50 font-bold text-sm disabled:opacity-25" title="행 삭제">-</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </section>
 
         </div>{/* end left */}
 
-        {/* ===== RIGHT 30%: Section 3 ===== */}
-        <div className="w-[30%] flex-shrink-0 h-full">
-          <section className="h-full flex flex-col bg-white border-l border-gray-200 shadow-sm overflow-hidden">
+        {/* ===== RIGHT: Section 3 ===== */}
+        <div className="md:w-[40%] md:flex-shrink-0 md:h-full">
+          <section className="flex flex-col bg-white border-t border-gray-200 shadow-sm md:h-full md:border-t-0 md:border-l md:overflow-hidden">
 
             {/* Header */}
-            <div className="flex-none px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-indigo-600 text-white text-xs font-bold">3</span>
-                <h2 className="text-sm font-bold text-gray-800">예상 당첨 번호</h2>
+            <div className="flex-none px-4 py-3 border-b border-gray-100 flex flex-wrap items-center justify-between gap-y-2 md:px-5 md:py-4">
+              <div className="flex items-center gap-3">
+                <span className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-indigo-600 text-white">
+                  <IconDice size="md" />
+                </span>
+                <h2 className="text-xl font-bold text-gray-900 tracking-tight">예상 당첨 번호</h2>
               </div>
-              <button onClick={refreshAll} disabled={isGeneratingAI}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 whitespace-nowrap transition-all">
-                {isGeneratingAI
-                  ? <><span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />생성 중</>
-                  : '✨ AI 당첨 번호 생성'}
-              </button>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <select
+                  value={selectedRound ?? ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (!val) {
+                      setSelectedRound(null);
+                      generateAIPredictions(undefined);
+                    } else {
+                      const round = Number(val);
+                      setSelectedRound(round);
+                      generateAIPredictions(round);
+                    }
+                  }}
+                  disabled={isGeneratingAI || results.length === 0}
+                  className="flex-1 sm:flex-none min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:opacity-40"
+                >
+                  <option value="">회차 선택</option>
+                  {results.map(r => (
+                    <option key={r.round} value={r.round}>{r.round}회 ({r.draw_date})</option>
+                  ))}
+                </select>
+                <button onClick={refreshAll} disabled={isGeneratingAI}
+                  className="flex-shrink-0 inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50 whitespace-nowrap transition-all shadow-sm">
+                  {isGeneratingAI
+                    ? <><span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />생성 중</>
+                    : '🎲 비인기 조합 생성'}
+                </button>
+              </div>
             </div>
 
             {/* Body */}
-            <div className="flex-1 min-h-0 overflow-hidden px-3 py-2 flex flex-col gap-2">
+            <div className="px-4 py-4 flex flex-col gap-4 md:flex-1 md:min-h-0 md:overflow-hidden md:px-5">
 
-              {/* Type 1 */}
-              <div className="flex-none rounded-xl border border-indigo-100 bg-indigo-50/40 px-3 py-2">
-                <div className="flex items-center gap-1.5 mb-2">
-                  <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-indigo-500 text-white text-[10px] font-bold">1</span>
-                  <span className="text-xs font-semibold text-indigo-800">최다 노출 번호</span>
-                  {isSavingPredicted && <span className="text-[10px] text-gray-400 ml-1">저장 중...</span>}
+              {/* Logic description card */}
+              <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50/80 to-white px-4 py-3 md:flex-1 md:min-h-0 md:overflow-y-auto">
+                <h3 className="text-base font-bold text-indigo-900 mb-3">생성 전략</h3>
+                <div className="flex flex-col gap-2">
+                  {[
+                    { tag: '생일 편향 회피', color: 'bg-indigo-100 text-indigo-700', desc: '32~45번에 3배 가중치 — 1~31은 생일 선택 편향으로 당첨 시 수령액 감소' },
+                    { tag: '저번호 제한',    color: 'bg-blue-100 text-blue-700',    desc: '1~31 범위에서 최대 3개까지만 포함' },
+                    { tag: '합계 범위',      color: 'bg-emerald-100 text-emerald-700', desc: '6개 번호의 합: 100 ~ 175' },
+                    { tag: '홀짝 균형',      color: 'bg-amber-100 text-amber-700',  desc: '홀수 2~4개, 짝수 2~4개 유지' },
+                    { tag: '연속번호 제한',  color: 'bg-orange-100 text-orange-700', desc: '연속된 번호 최대 2개 (3,4 허용 / 3,4,5 불가)' },
+                    { tag: '등차수열 제외',  color: 'bg-red-100 text-red-700',      desc: '간격 ≤5의 3항 패턴 제외 (예: 5, 10, 15)' },
+                    { tag: '조합 다양성',    color: 'bg-violet-100 text-violet-700', desc: '5개 조합끼리 공통 번호 최대 3개 — 유사 조합 방지' },
+                    { tag: '끝자리 분산',    color: 'bg-pink-100 text-pink-700',    desc: '같은 끝자리(예: 5·15·25) 최대 2개 — 날짜 선택 패턴 회피' },
+                    { tag: '직전 회차 제외', color: 'bg-gray-100 text-gray-700',    desc: '직전 당첨번호와 4개 이상 겹치는 조합 제외' },
+                  ].map(({ tag, color, desc }) => (
+                    <div key={tag} className="flex items-start gap-3">
+                      <span className={`flex-shrink-0 mt-0.5 inline-flex items-center justify-center w-[108px] px-2 py-1 rounded-lg text-xs font-bold whitespace-nowrap ${color}`}>{tag}</span>
+                      <span className="text-xs text-gray-600 leading-snug pt-0.5">{desc}</span>
+                    </div>
+                  ))}
                 </div>
-                {type1Numbers.length === 6 ? (
-                  <div className="flex flex-wrap gap-[15px] ml-[22px]">
-                    {type1Numbers.map((num, idx) => (
-                      <div key={idx} className="flex flex-col items-center gap-0.5">
-                        <NumberBall num={num} size="sm" />
-                        {type1Freqs[idx] != null && (
-                          <span className="text-[9px] text-indigo-400 font-medium">{type1Freqs[idx]}회</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-gray-400">섹션2 조건을 실행하면 자동 생성됩니다.</p>
-                )}
-              </div>
-
-              {/* Type 2 */}
-              <div className="flex-none rounded-xl border border-violet-100 bg-violet-50/40 px-3 py-2">
-                <div className="flex items-center gap-1.5 mb-1">
-                  <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-violet-500 text-white text-[10px] font-bold">2</span>
-                  <span className="text-xs font-semibold text-violet-800">AI 생성 (섹션2 기반) × 4</span>
-                </div>
-                <div className="flex flex-wrap items-center gap-1 mb-1.5">
-                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-100 text-violet-600 border border-violet-200">
-                    섹션2 고빈도 번호 풀 기반
-                  </span>
-                  {type2Provider && (
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-500 border border-gray-200">
-                      {type2Provider}
-                    </span>
-                  )}
-                  {type2Model && (
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-500 border border-indigo-100">
-                      {type2Model}
-                    </span>
-                  )}
-                  {type2Cutoff && (
-                    <span className="text-[10px] text-gray-400">학습종료 {type2Cutoff}</span>
-                  )}
-                </div>
-                <p className="text-[10px] text-violet-500/80 leading-relaxed mb-1.5">
-                  섹션2 조건을 통과한 회차의 번호를 분석하여 고빈도 번호 풀을 구성합니다.<br/>
-                  해당 풀 내에서만 번호를 선택하며, Hot/Cold 가중치를 적용합니다.<br/>
-                  홀짝 균형·번호대 분산·합계 100~175 범위를 검증하여 4개 조합을 생성합니다.
-                </p>
-                {type2Numbers.length > 0 ? (
-                  <div>
-                    {type2Numbers.map((combo, i) => (
-                      <div key={i} className={`flex items-center gap-1.5 py-2.5 ${i > 0 ? 'border-t border-violet-100' : ''}`}>
-                        <span className="text-[10px] text-violet-400 w-4 flex-shrink-0">{i+1}</span>
-                        <div className="flex gap-[15px] flex-wrap">
-                          {combo.map((num, j) => <NumberBall key={j} num={num} size="sm" />)}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-gray-400">{aiError || '버튼을 눌러 AI 번호를 생성하세요.'}</p>
-                )}
               </div>
 
               {/* Type 3 */}
-              <div className="flex-none rounded-xl border border-emerald-100 bg-emerald-50/40 px-3 py-2">
-                <div className="flex items-center gap-1.5 mb-1">
-                  <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500 text-white text-[10px] font-bold">3</span>
-                  <span className="text-xs font-semibold text-emerald-800">AI 생성 (1~45 전체) × 5</span>
+              <div className="flex-none flex flex-col rounded-2xl border border-emerald-200 bg-emerald-50/60 px-4 py-4 md:px-5">
+                <div className="flex-none flex items-center justify-between mb-3">
+                  <span className="text-base font-bold text-emerald-900">비인기 조합 생성 &times; 5</span>
+                  {isSavingPredicted && <span className="text-xs text-gray-400">저장 중...</span>}
                 </div>
-                <div className="flex flex-wrap items-center gap-1 mb-1.5">
-                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-100 text-emerald-600 border border-emerald-200">
-                    1~45 전체 통계 분석 기반
-                  </span>
-                  {type3Provider && (
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-500 border border-gray-200">
-                      {type3Provider}
-                    </span>
-                  )}
-                  {type3Model && (
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-500 border border-indigo-100">
-                      {type3Model}
-                    </span>
-                  )}
-                  {type3Cutoff && (
-                    <span className="text-[10px] text-gray-400">학습종료 {type3Cutoff}</span>
-                  )}
-                </div>
-                <p className="text-[10px] text-emerald-500/80 leading-relaxed mb-1.5">
-                  역대 전체 로또 당첨번호의 출현 빈도를 통계 분석합니다.<br/>
-                  빈출(Hot)·장기 미출현(Cold) 번호를 적절히 혼합하여 선택합니다.<br/>
-                  번호대 분산·홀짝 균형·합계 100~175 범위를 최적화하여 5개 조합을 생성합니다.
-                </p>
                 {type3Numbers.length > 0 ? (
-                  <div>
-                    {type3Numbers.map((combo, i) => (
-                      <div key={i} className={`flex items-center gap-1.5 py-2.5 ${i > 0 ? 'border-t border-emerald-100' : ''}`}>
-                        <span className="text-[10px] text-emerald-400 w-4 flex-shrink-0">{i+1}</span>
-                        <div className="flex gap-[15px] flex-wrap">
-                          {combo.map((num, j) => <NumberBall key={j} num={num} size="sm" />)}
+                  <>
+                    <div className="flex flex-col">
+                      {(() => {
+                        const ref = selectedRound != null ? results.find(r => r.round === selectedRound) : null;
+                        const matchSet = ref != null
+                          ? new Set<number>(
+                              [ref.num1, ref.num2, ref.num3, ref.num4, ref.num5, ref.num6, ref.bonus1]
+                                .filter((n): n is number => typeof n === 'number')
+                            )
+                          : new Set<number>();
+                        return type3Numbers.map((combo, i) => (
+                          <div key={i} className={`flex justify-center gap-3 py-3 ${i > 0 ? 'border-t border-emerald-200/70' : ''}`}>
+                            {combo.map((num, j) => <NumberBall key={j} num={num} size="md" highlighted={matchSet.has(num)} />)}
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                    {selectedRound != null && (() => {
+                      const ref = results.find(r => r.round === selectedRound);
+                      if (!ref) return null;
+                      const winSet = new Set<number>(
+                        [ref.num1, ref.num2, ref.num3, ref.num4, ref.num5, ref.num6]
+                          .filter((n): n is number => n !== null)
+                      );
+                      const analyses = type3Numbers.map(combo => {
+                        const matchCount = combo.filter(n => winSet.has(n)).length;
+                        const bonusMatch = ref.bonus1 != null && combo.includes(ref.bonus1);
+                        return { matchCount, bonusMatch, tier: getPrizeTier(matchCount, bonusMatch) };
+                      });
+                      const avgMatch = analyses.reduce((s, a) => s + a.matchCount, 0) / analyses.length;
+                      const tierOrder = ['1등', '2등', '3등', '4등', '5등', '낙첨'];
+                      const bestTier = analyses.reduce((best, a) =>
+                        tierOrder.indexOf(a.tier) < tierOrder.indexOf(best) ? a.tier : best, '낙첨'
+                      );
+                      return (
+                        <div className="flex-none mt-3 pt-3 border-t border-emerald-200/70">
+                          <div className="text-[11px] font-bold text-emerald-800 mb-2">
+                            📊 당첨 분석 · 제{selectedRound}회 기준
+                          </div>
+                          <div className="grid grid-cols-5 gap-1.5 mb-2.5">
+                            {analyses.map((a, i) => (
+                              <div key={i} className="flex flex-col items-center gap-1 py-2 rounded-xl bg-white border border-emerald-100">
+                                <span className="text-[10px] text-gray-400">조합{i + 1}</span>
+                                <span className="text-sm font-bold text-gray-700">{a.matchCount}개</span>
+                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${getTierStyle(a.tier)}`}>
+                                  {a.tier}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="text-[11px] text-gray-500 text-center">
+                            평균 일치 <b className="text-gray-700">{avgMatch.toFixed(1)}개</b>
+                            {' · '}
+                            최고 등수 <b className={getTierTextColor(bestTier)}>{bestTier}</b>
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
+                      );
+                    })()}
+                  </>
                 ) : (
-                  <p className="text-xs text-gray-400">{aiError || '버튼을 눌러 AI 번호를 생성하세요.'}</p>
+                  <p className="text-sm text-gray-400">{aiError || '버튼을 눌러 번호를 생성하세요.'}</p>
                 )}
               </div>
 
