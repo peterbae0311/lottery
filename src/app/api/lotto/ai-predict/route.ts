@@ -1,37 +1,19 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 
-function weightedSample(count: number): number[] {
-  const pool: [number, number][] = [];
-  for (let i = 1; i <= 31; i++) pool.push([i, 1]);
-  for (let i = 32; i <= 45; i++) pool.push([i, 3]);
-
+function uniformSample(count: number): number[] {
+  const pool = Array.from({ length: 45 }, (_, i) => i + 1);
   const result: number[] = [];
-  const available = [...pool];
-
-  while (result.length < count && available.length > 0) {
-    const total = available.reduce((s, [, w]) => s + w, 0);
-    const r = Math.random() * total;
-    let cumulative = 0;
-    for (let i = 0; i < available.length; i++) {
-      cumulative += available[i][1];
-      if (r <= cumulative) {
-        result.push(available[i][0]);
-        available.splice(i, 1);
-        break;
-      }
-    }
+  while (result.length < count && pool.length > 0) {
+    const idx = Math.floor(Math.random() * pool.length);
+    result.push(pool[idx]);
+    pool.splice(idx, 1);
   }
   return result;
 }
 
-function isValid(combo: number[], lastDrawSet: Set<number>): boolean {
-  const sum = combo.reduce((a, b) => a + b, 0);
-  if (sum < 100 || sum > 175) return false;
-
+function isValid(combo: number[]): boolean {
   const oddCount = combo.filter(n => n % 2 === 1).length;
   if (oddCount < 2 || oddCount > 4) return false;
-
-  if (combo.filter(n => n <= 31).length > 3) return false;
 
   // Max 2 consecutive
   let consec = 1, maxConsec = 1;
@@ -56,12 +38,6 @@ function isValid(combo: number[], lastDrawSet: Set<number>): boolean {
     if (tailMap[tail] > 2) return false;
   }
 
-  // 직전 회차 제외: 직전 당첨번호와 4개 이상 겹치면 제외
-  if (lastDrawSet.size > 0) {
-    const shared = combo.filter(n => lastDrawSet.has(n)).length;
-    if (shared >= 4) return false;
-  }
-
   return true;
 }
 
@@ -70,26 +46,23 @@ function sharedCount(a: number[], b: number[]): number {
   return a.filter(n => s.has(n)).length;
 }
 
-function generateCombinations(count: number, lastDrawSet: Set<number>): number[][] {
+function generateCombinations(count: number, excludeNumbers: number[] = []): number[][] {
   const results: number[][] = [];
   for (let attempt = 0; attempt < 10000 && results.length < count; attempt++) {
-    const raw = weightedSample(6).sort((a, b) => a - b);
-    if (isValid(raw, lastDrawSet) && !results.some(r => sharedCount(raw, r) > 3)) {
-      results.push(raw);
-    }
+    const raw = uniformSample(6).sort((a, b) => a - b);
+    if (!isValid(raw)) continue;
+    if (results.some(r => sharedCount(raw, r) > 2)) continue;
+    // 직전 회차 제외: 이전 당첨번호와 3개 이상 겹치면 제외
+    if (excludeNumbers.length > 0 && sharedCount(raw, excludeNumbers) >= 3) continue;
+    results.push(raw);
   }
   return results;
 }
 
-export async function POST(req: NextRequest) {
-  let body: { lastDrawNumbers?: number[] } = {};
-  try { body = await req.json(); } catch { /* no body */ }
-
-  const lastDrawSet = new Set<number>(
-    (body.lastDrawNumbers ?? []).filter(n => typeof n === 'number' && n >= 1 && n <= 45)
-  );
-
-  const combinations = generateCombinations(5, lastDrawSet);
+export async function POST(req: Request) {
+  const body = await req.json().catch(() => ({}));
+  const excludeNumbers: number[] = Array.isArray(body.excludeNumbers) ? body.excludeNumbers : [];
+  const combinations = generateCombinations(5, excludeNumbers);
   if (combinations.length === 0) {
     return NextResponse.json({ success: false, error: '조합 생성 실패' }, { status: 500 });
   }

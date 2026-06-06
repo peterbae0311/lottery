@@ -38,6 +38,13 @@ interface ConditionRow {
   isLoading: boolean;
 }
 
+interface ConfirmedPurchase {
+  id: number;
+  target_round: number;
+  combos: number[][];
+  confirmed_at: string;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -310,6 +317,9 @@ export default function Home() {
   const [aiError, setAiError] = useState('');
   const [isSavingPredicted, setIsSavingPredicted] = useState(false);
   const [selectedRound, setSelectedRound] = useState<number | null>(null);
+  const [confirmedPurchases, setConfirmedPurchases] = useState<ConfirmedPurchase[]>([]);
+  const [selectedConfirmedId, setSelectedConfirmedId] = useState<number | null>(null);
+  const [isConfirming, setIsConfirming] = useState(false);
   // DB에서 불러온 직후 auto-save 방지용 플래그
   const skipSaveRef = useRef(false);
 
@@ -560,20 +570,24 @@ export default function Home() {
   const generateAIPredictions = useCallback(async (targetRound?: number) => {
     setIsGeneratingAI(true);
     setAiError('');
-    // Find the round prior to targetRound for the 직전 회차 제외 rule
+
+    // 직전 회차 제외: targetRound 기준으로 바로 이전 회차 당첨번호를 추출
     const targetIdx = targetRound != null
       ? results.findIndex(r => r.round === targetRound)
       : 0;
-    const prevResult = targetIdx >= 0 && targetIdx + 1 < results.length ? results[targetIdx + 1] : null;
-    const lastDrawNumbers = prevResult
+    const prevResult = targetIdx >= 0 && targetIdx + 1 < results.length
+      ? results[targetIdx + 1]
+      : null;
+    const excludeNumbers = prevResult
       ? [prevResult.num1, prevResult.num2, prevResult.num3, prevResult.num4, prevResult.num5, prevResult.num6]
           .filter((n): n is number => n !== null)
       : [];
+
     try {
       const res = await fetch('/api/lotto/ai-predict', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lastDrawNumbers }),
+        body: JSON.stringify({ excludeNumbers }),
       });
       const d = await res.json();
       if (d.success && Array.isArray(d.data?.combinations)) {
@@ -616,6 +630,52 @@ export default function Home() {
   const refreshAll = useCallback(async () => {
     await generateAIPredictions(selectedRound ?? undefined);
   }, [generateAIPredictions, selectedRound]);
+
+  // ---------------------------------------------------------------------------
+  // Section 3: Confirmed purchases
+  // ---------------------------------------------------------------------------
+
+  const loadConfirmed = useCallback(async () => {
+    try {
+      const res = await fetch('/api/lotto/confirmed');
+      const d = await res.json();
+      if (d.success) setConfirmedPurchases(d.data);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { loadConfirmed(); }, [loadConfirmed]);
+
+  // 목록 변경 시 선택 항목 자동 관리: 없으면 첫 번째 선택, 삭제된 항목이면 재선택
+  useEffect(() => {
+    if (confirmedPurchases.length === 0) {
+      setSelectedConfirmedId(null);
+    } else if (!confirmedPurchases.find(p => p.id === selectedConfirmedId)) {
+      setSelectedConfirmedId(confirmedPurchases[0].id);
+    }
+  }, [confirmedPurchases, selectedConfirmedId]);
+
+  const confirmPurchase = useCallback(async () => {
+    if (type3Numbers.length === 0 || results.length === 0) return;
+    setIsConfirming(true);
+    try {
+      const target_round = results[0].round + 1;
+      const res = await fetch('/api/lotto/confirmed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target_round, combos: type3Numbers }),
+      });
+      const d = await res.json();
+      if (d.success) await loadConfirmed();
+    } catch { /* ignore */ }
+    finally { setIsConfirming(false); }
+  }, [type3Numbers, results, loadConfirmed]);
+
+  const deleteConfirmed = useCallback(async (id: number) => {
+    try {
+      await fetch(`/api/lotto/confirmed?id=${id}`, { method: 'DELETE' });
+      await loadConfirmed();
+    } catch { /* ignore */ }
+  }, [loadConfirmed]);
 
   // ---------------------------------------------------------------------------
   // Render
@@ -834,34 +894,24 @@ export default function Home() {
             {/* Body */}
             <div className="px-4 py-4 flex flex-col gap-4 md:flex-1 md:min-h-0 md:overflow-hidden md:px-5">
 
-              {/* Logic description card */}
-              <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50/80 to-white px-4 py-3 md:flex-1 md:min-h-0 md:overflow-y-auto">
-                <h3 className="text-base font-bold text-indigo-900 mb-3">생성 전략</h3>
-                <div className="flex flex-col gap-2">
-                  {[
-                    { tag: '생일 편향 회피', color: 'bg-indigo-100 text-indigo-700', desc: '32~45번에 3배 가중치 — 1~31은 생일 선택 편향으로 당첨 시 수령액 감소' },
-                    { tag: '저번호 제한',    color: 'bg-blue-100 text-blue-700',    desc: '1~31 범위에서 최대 3개까지만 포함' },
-                    { tag: '합계 범위',      color: 'bg-emerald-100 text-emerald-700', desc: '6개 번호의 합: 100 ~ 175' },
-                    { tag: '홀짝 균형',      color: 'bg-amber-100 text-amber-700',  desc: '홀수 2~4개, 짝수 2~4개 유지' },
-                    { tag: '연속번호 제한',  color: 'bg-orange-100 text-orange-700', desc: '연속된 번호 최대 2개 (3,4 허용 / 3,4,5 불가)' },
-                    { tag: '등차수열 제외',  color: 'bg-red-100 text-red-700',      desc: '간격 ≤5의 3항 패턴 제외 (예: 5, 10, 15)' },
-                    { tag: '조합 다양성',    color: 'bg-violet-100 text-violet-700', desc: '5개 조합끼리 공통 번호 최대 3개 — 유사 조합 방지' },
-                    { tag: '끝자리 분산',    color: 'bg-pink-100 text-pink-700',    desc: '같은 끝자리(예: 5·15·25) 최대 2개 — 날짜 선택 패턴 회피' },
-                    { tag: '직전 회차 제외', color: 'bg-gray-100 text-gray-700',    desc: '직전 당첨번호와 4개 이상 겹치는 조합 제외' },
-                  ].map(({ tag, color, desc }) => (
-                    <div key={tag} className="flex items-start gap-3">
-                      <span className={`flex-shrink-0 mt-0.5 inline-flex items-center justify-center w-[108px] px-2 py-1 rounded-lg text-xs font-bold whitespace-nowrap ${color}`}>{tag}</span>
-                      <span className="text-xs text-gray-600 leading-snug pt-0.5">{desc}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
               {/* Type 3 */}
               <div className="flex-none flex flex-col rounded-2xl border border-emerald-200 bg-emerald-50/60 px-4 py-4 md:px-5">
                 <div className="flex-none flex items-center justify-between mb-3">
                   <span className="text-base font-bold text-emerald-900">비인기 조합 생성 &times; 5</span>
-                  {isSavingPredicted && <span className="text-xs text-gray-400">저장 중...</span>}
+                  <div className="flex items-center gap-2">
+                    {isSavingPredicted && <span className="text-xs text-gray-400">저장 중...</span>}
+                    {type3Numbers.length > 0 && (
+                      <button
+                        onClick={confirmPurchase}
+                        disabled={isConfirming || results.length === 0}
+                        className="inline-flex items-center gap-1 px-3 py-1 text-xs font-semibold bg-rose-500 text-white rounded-lg hover:bg-rose-600 disabled:opacity-40 transition-all"
+                      >
+                        {isConfirming
+                          ? <><span className="inline-block w-2.5 h-2.5 border-2 border-white border-t-transparent rounded-full animate-spin" />확정 중</>
+                          : '🎯 확정하기'}
+                      </button>
+                    )}
+                  </div>
                 </div>
                 {type3Numbers.length > 0 ? (
                   <>
@@ -927,6 +977,114 @@ export default function Home() {
                   <p className="text-sm text-gray-400">{aiError || '버튼을 눌러 번호를 생성하세요.'}</p>
                 )}
               </div>
+
+              {/* Scrollable: confirmed history + strategy */}
+              <div className="flex flex-col gap-4 md:flex-1 md:min-h-0 md:overflow-y-auto">
+
+                {/* Confirmed purchase history */}
+                {confirmedPurchases.length > 0 && (
+                  <div className="rounded-2xl border border-rose-200 bg-rose-50/60 px-4 py-4">
+                    {/* 헤더: 제목 + 회차 선택 드롭다운 + 삭제 */}
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-sm font-bold text-rose-900">🎯 확정 구매 이력</span>
+                      <select
+                        value={selectedConfirmedId ?? ''}
+                        onChange={(e) => setSelectedConfirmedId(Number(e.target.value))}
+                        className="flex-1 border border-rose-200 rounded px-1.5 py-0.5 text-xs bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-rose-400"
+                      >
+                        {confirmedPurchases.map(purchase => {
+                          const actual = results.find(r => r.round === purchase.target_round);
+                          return (
+                            <option key={purchase.id} value={purchase.id}>
+                              {purchase.target_round}회 {actual ? '(결과 있음)' : '(추첨 대기)'}
+                            </option>
+                          );
+                        })}
+                      </select>
+                      <button
+                        onClick={() => { if (selectedConfirmedId != null) deleteConfirmed(selectedConfirmedId); }}
+                        className="text-gray-300 hover:text-red-400 text-lg leading-none transition-colors"
+                        title="삭제"
+                      >×</button>
+                    </div>
+
+                    {/* 선택된 항목 상세 */}
+                    {(() => {
+                      const purchase = confirmedPurchases.find(p => p.id === selectedConfirmedId);
+                      if (!purchase) return null;
+                      const actual = results.find(r => r.round === purchase.target_round);
+                      const winNums = actual
+                        ? [actual.num1, actual.num2, actual.num3, actual.num4, actual.num5, actual.num6].filter((n): n is number => n !== null)
+                        : [];
+                      const winSet = new Set(winNums);
+                      const displaySet = new Set<number>([...winNums, ...(actual?.bonus1 != null ? [actual.bonus1] : [])]);
+                      const analyses = actual
+                        ? purchase.combos.map(combo => {
+                            const matchCount = combo.filter(n => winSet.has(n)).length;
+                            const bonusMatch = matchCount === 5 && actual.bonus1 != null && combo.includes(actual.bonus1);
+                            return { matchCount, bonusMatch, tier: getPrizeTier(matchCount, bonusMatch) };
+                          })
+                        : null;
+                      const tierOrder = ['1등', '2등', '3등', '4등', '5등', '낙첨'];
+                      const bestTier = analyses?.reduce((best, a) =>
+                        tierOrder.indexOf(a.tier) < tierOrder.indexOf(best) ? a.tier : best, '낙첨'
+                      );
+                      return (
+                        <div className="rounded-xl border border-rose-100 bg-white px-3 py-3">
+                          <div className="text-[11px] font-bold text-rose-800 mb-2">
+                            제 {purchase.target_round}회 조합
+                            {actual && <span className="ml-1 font-normal text-gray-400">· 당첨번호 비교</span>}
+                          </div>
+                          {purchase.combos.map((combo, i) => (
+                            <div key={i} className={`flex items-center gap-2 py-1.5 ${i > 0 ? 'border-t border-gray-100' : ''}`}>
+                              <div className="flex gap-1.5 flex-1 justify-center">
+                                {combo.map((num, j) => (
+                                  <NumberBall key={j} num={num} size="sm" highlighted={actual ? displaySet.has(num) : false} />
+                                ))}
+                              </div>
+                              {analyses && (
+                                <span className={`flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${getTierStyle(analyses[i].tier)}`}>
+                                  {analyses[i].tier}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                          {analyses && bestTier && (
+                            <div className="mt-2 pt-2 border-t border-gray-100 text-[11px] text-gray-500 text-center">
+                              최고 등수 <b className={getTierTextColor(bestTier)}>{bestTier}</b>
+                              {' · '}
+                              평균 일치 <b className="text-gray-700">
+                                {(analyses.reduce((s, a) => s + a.matchCount, 0) / analyses.length).toFixed(1)}개
+                              </b>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+
+                {/* Logic description card */}
+                <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50/80 to-white px-4 py-3">
+                  <h3 className="text-base font-bold text-indigo-900 mb-3">생성 전략</h3>
+                  <div className="flex flex-col gap-2">
+                    {[
+                      { tag: '홀짝 균형',      color: 'bg-amber-100 text-amber-700',  desc: '홀수 2~4개, 짝수 2~4개 유지' },
+                      { tag: '연속번호 제한',  color: 'bg-orange-100 text-orange-700', desc: '연속된 번호 최대 2개 (3,4 허용 / 3,4,5 불가)' },
+                      { tag: '등차수열 제외',  color: 'bg-red-100 text-red-700',      desc: '간격 ≤5의 3항 패턴 제외 (예: 5, 10, 15)' },
+                      { tag: '직전 회차 제외', color: 'bg-sky-100 text-sky-700',       desc: '이전 추첨 번호와 3개 이상 겹치는 조합 제외' },
+                      { tag: '조합 다양성',    color: 'bg-violet-100 text-violet-700', desc: '5개 조합끼리 공통 번호 최대 2개 — 유사 조합 방지' },
+                      { tag: '끝자리 분산',    color: 'bg-pink-100 text-pink-700',    desc: '같은 끝자리(예: 5·15·25) 최대 2개 — 날짜 선택 패턴 회피' },
+                    ].map(({ tag, color, desc }) => (
+                      <div key={tag} className="flex items-start gap-3">
+                        <span className={`flex-shrink-0 mt-0.5 inline-flex items-center justify-center w-[108px] px-2 py-1 rounded-lg text-xs font-bold whitespace-nowrap ${color}`}>{tag}</span>
+                        <span className="text-xs text-gray-600 leading-snug pt-0.5">{desc}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+              </div>{/* end scrollable */}
 
             </div>
           </section>
