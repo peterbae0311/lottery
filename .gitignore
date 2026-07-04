@@ -39,3 +39,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# playwright session logs/screenshots
+.playwright-mcp/
+
+# local session files (not source code)
+2026-*.txt
+conversation-*.txt
+Templotto_results.json
+*.pptx
+public/mockup.html
+scripts/

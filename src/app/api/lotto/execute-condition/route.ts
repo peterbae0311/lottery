@@ -10,6 +10,7 @@ interface LottoResult {
   num4: number;
   num5: number;
   num6: number;
+  bonus1: number | null;
   first_prize_winners: number | null;
   first_prize_amount: number | null;
 }
@@ -28,10 +29,39 @@ function getTopSixNumbers(results: LottoResult[]): { numbers: number[]; frequenc
   return { numbers: top6.map((x) => x.num), frequencies: top6.map((x) => x.count) };
 }
 
+// 보너스 번호 상위 출현 빈도 (2등 전략용)
+function getTopBonusNumbers(results: LottoResult[]): { numbers: number[]; frequencies: number[] } {
+  const freq: Record<number, number> = {};
+  for (const row of results) {
+    if (row.bonus1 != null) freq[row.bonus1] = (freq[row.bonus1] ?? 0) + 1;
+  }
+  const top = Object.entries(freq)
+    .map(([num, count]) => ({ num: Number(num), count }))
+    .sort((a, b) => b.count - a.count || a.num - b.num)
+    .slice(0, 10);
+  return { numbers: top.map((x) => x.num), frequencies: top.map((x) => x.count) };
+}
+
+// 번호대별 분포: [01-09, 10-19, 20-29, 30-39, 40-45]
+function getDistribution(results: LottoResult[]): number[] {
+  const ranges = [0, 0, 0, 0, 0];
+  for (const row of results) {
+    for (const num of [row.num1, row.num2, row.num3, row.num4, row.num5, row.num6]) {
+      if (num == null) continue;
+      if      (num <= 9)  ranges[0]++;
+      else if (num <= 19) ranges[1]++;
+      else if (num <= 29) ranges[2]++;
+      else if (num <= 39) ranges[3]++;
+      else                ranges[4]++;
+    }
+  }
+  return ranges;
+}
+
 export async function POST(req: NextRequest) {
   const supabase = createServerClient();
 
-  let body: { conditionType?: number; years?: number; months?: number; maxWinners?: number; maxPrizeAmt?: number };
+  let body: { conditionType?: number; years?: number; months?: number; maxWinners?: number; maxPrizeAmt?: number; maxConsec?: number; oddCount?: number; sumMin?: number; sumMax?: number };
   try {
     body = await req.json();
   } catch {
@@ -47,7 +77,7 @@ export async function POST(req: NextRequest) {
   while (true) {
     const { data, error } = await supabase
       .from('lotto_results')
-      .select('round, draw_date, num1, num2, num3, num4, num5, num6, first_prize_winners, first_prize_amount')
+      .select('round, draw_date, num1, num2, num3, num4, num5, num6, bonus1, first_prize_winners, first_prize_amount')
       .order('round', { ascending: false })
       .range(from, from + PAGE - 1);
     if (error) return NextResponse.json({ success: false, error: error.message }, { status: 500 });
@@ -71,11 +101,43 @@ export async function POST(req: NextRequest) {
     filteredResults = allResults.filter(
       (r) => r.first_prize_amount != null && r.first_prize_amount >= maxPrizeAmt * 1e8
     );
+  } else if (conditionType === 4) {
+    // 연속번호 패턴 기준
+    const maxConsec = Number(body.maxConsec ?? 0);
+    filteredResults = allResults.filter((r) => {
+      const nums = [r.num1, r.num2, r.num3, r.num4, r.num5, r.num6]
+        .filter((n): n is number => n != null)
+        .sort((a, b) => a - b);
+      let maxRun = 1, curRun = 1;
+      for (let i = 1; i < nums.length; i++) {
+        if (nums[i] - nums[i - 1] === 1) { curRun++; maxRun = Math.max(maxRun, curRun); }
+        else curRun = 1;
+      }
+      if (maxConsec === 0) return maxRun === 1;
+      if (maxConsec === 2) return maxRun === 2;
+      return maxRun >= 3;
+    });
+  } else if (conditionType === 5) {
+    // 홀짝 비율
+    const oddCount = Number(body.oddCount ?? 3);
+    filteredResults = allResults.filter((r) => {
+      const nums = [r.num1, r.num2, r.num3, r.num4, r.num5, r.num6].filter((n): n is number => n != null);
+      return nums.filter(n => n % 2 === 1).length === oddCount;
+    });
+  } else if (conditionType === 6) {
+    // 합계 범위
+    const sumMin = Number(body.sumMin ?? 115);
+    const sumMax = Number(body.sumMax ?? 185);
+    filteredResults = allResults.filter((r) => {
+      const nums = [r.num1, r.num2, r.num3, r.num4, r.num5, r.num6].filter((n): n is number => n != null);
+      const sum = nums.reduce((a, b) => a + b, 0);
+      return sum >= sumMin && sum <= sumMax;
+    });
   } else {
     // 기간 기준 (년/월)
     const years = Number(body.years ?? 0);
     const months = Number(body.months ?? 0);
-    const limit = years > 0 || months > 0 ? years * 52 + months * 4 : null;
+    const limit = years > 0 || months > 0 ? Math.round(years * 52 + months * (52 / 12)) : null;
     filteredResults = limit != null ? allResults.slice(0, limit) : allResults;
   }
 
@@ -84,8 +146,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: '충분한 데이터가 없습니다.' }, { status: 422 });
   }
 
+  const distribution = getDistribution(filteredResults);
+  const { numbers: bonusNumbers, frequencies: bonusFrequencies } = getTopBonusNumbers(filteredResults);
+
   return NextResponse.json({
     success: true,
-    data: { numbers, frequencies, rounds_analyzed: filteredResults.length },
+    data: { numbers, frequencies, rounds_analyzed: filteredResults.length, distribution, bonusNumbers, bonusFrequencies },
   });
 }
