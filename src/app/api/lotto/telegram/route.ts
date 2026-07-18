@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
 
   for (const { label, combos, generation_mode } of purchases) {
     const modeText = generation_mode ? ` (${MODE_LABELS[generation_mode] ?? generation_mode})` : '';
-    lines.push(`${label} ${combos.length}개 조합${modeText}`);
+    lines.push(`${label}${modeText}`);
     for (const combo of combos) {
       lines.push('  ' + combo.map(pad).join('  '));
     }

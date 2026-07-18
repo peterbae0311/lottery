@@ -1,78 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
-
-interface LottoResult {
-  round: number;
-  draw_date: string;
-  num1: number;
-  num2: number;
-  num3: number;
-  num4: number;
-  num5: number;
-  num6: number;
-  bonus1: number | null;
-  first_prize_winners: number | null;
-  first_prize_amount: number | null;
-}
-
-function getTopSixNumbers(results: LottoResult[]): { numbers: number[]; frequencies: number[] } {
-  const freq: Record<number, number> = {};
-  for (const row of results) {
-    for (const num of [row.num1, row.num2, row.num3, row.num4, row.num5, row.num6]) {
-      if (num != null) freq[num] = (freq[num] ?? 0) + 1;
-    }
-  }
-  const top6 = Object.entries(freq)
-    .map(([num, count]) => ({ num: Number(num), count }))
-    .sort((a, b) => b.count - a.count || a.num - b.num)
-    .slice(0, 6);
-  return { numbers: top6.map((x) => x.num), frequencies: top6.map((x) => x.count) };
-}
-
-// 보너스 번호 상위 출현 빈도 (2등 전략용)
-function getTopBonusNumbers(results: LottoResult[]): { numbers: number[]; frequencies: number[] } {
-  const freq: Record<number, number> = {};
-  for (const row of results) {
-    if (row.bonus1 != null) freq[row.bonus1] = (freq[row.bonus1] ?? 0) + 1;
-  }
-  const top = Object.entries(freq)
-    .map(([num, count]) => ({ num: Number(num), count }))
-    .sort((a, b) => b.count - a.count || a.num - b.num)
-    .slice(0, 10);
-  return { numbers: top.map((x) => x.num), frequencies: top.map((x) => x.count) };
-}
-
-// 번호대별 분포: [01-09, 10-19, 20-29, 30-39, 40-45]
-function getDistribution(results: LottoResult[]): number[] {
-  const ranges = [0, 0, 0, 0, 0];
-  for (const row of results) {
-    for (const num of [row.num1, row.num2, row.num3, row.num4, row.num5, row.num6]) {
-      if (num == null) continue;
-      if      (num <= 9)  ranges[0]++;
-      else if (num <= 19) ranges[1]++;
-      else if (num <= 29) ranges[2]++;
-      else if (num <= 39) ranges[3]++;
-      else                ranges[4]++;
-    }
-  }
-  return ranges;
-}
+import { type LottoRow, getTopKNumbers, getTopBonusNumbers, getDistribution, filterByCondition, type FilterParams } from '@/lib/lotto-engine';
 
 export async function POST(req: NextRequest) {
   const supabase = createServerClient();
 
-  let body: { conditionType?: number; years?: number; months?: number; maxWinners?: number; maxPrizeAmt?: number; maxConsec?: number; oddCount?: number; sumMin?: number; sumMax?: number };
+  let body: {
+    conditionType?: number; years?: number; months?: number;
+    maxWinners?: number; maxPrizeAmt?: number; maxConsec?: number;
+    oddCount?: number; sumMin?: number; sumMax?: number; minAC?: number;
+  };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ success: false, error: '잘못된 요청 형식입니다.' }, { status: 400 });
   }
 
-  const conditionType = Number(body.conditionType ?? 1);
+  const conditionType = Number(body.conditionType ?? 1) as FilterParams['conditionType'];
 
   // 전체 회차 페이지네이션 fetch
   const PAGE = 1000;
-  const allResults: LottoResult[] = [];
+  const allResults: LottoRow[] = [];
   let from = 0;
   while (true) {
     const { data, error } = await supabase
@@ -82,66 +30,27 @@ export async function POST(req: NextRequest) {
       .range(from, from + PAGE - 1);
     if (error) return NextResponse.json({ success: false, error: error.message }, { status: 500 });
     if (!data || data.length === 0) break;
-    allResults.push(...(data as LottoResult[]));
+    allResults.push(...(data as LottoRow[]));
     if (data.length < PAGE) break;
     from += PAGE;
   }
 
-  let filteredResults: LottoResult[];
+  const params: FilterParams = {
+    conditionType,
+    years: Number(body.years ?? 0),
+    months: Number(body.months ?? 0),
+    maxWinners: Number(body.maxWinners ?? 5),
+    maxPrizeAmt: Number(body.maxPrizeAmt ?? 20),
+    maxConsec: Number(body.maxConsec ?? 0),
+    oddCount: Number(body.oddCount ?? 3),
+    sumMin: Number(body.sumMin ?? 115),
+    sumMax: Number(body.sumMax ?? 185),
+    minAC: Number(body.minAC ?? 5),
+  };
 
-  if (conditionType === 2) {
-    // 당첨자 N명 미만
-    const maxWinners = Number(body.maxWinners ?? 5);
-    filteredResults = allResults.filter(
-      (r) => r.first_prize_winners != null && r.first_prize_winners < maxWinners
-    );
-  } else if (conditionType === 3) {
-    // 당첨금 N억 이상
-    const maxPrizeAmt = Number(body.maxPrizeAmt ?? 20);
-    filteredResults = allResults.filter(
-      (r) => r.first_prize_amount != null && r.first_prize_amount >= maxPrizeAmt * 1e8
-    );
-  } else if (conditionType === 4) {
-    // 연속번호 패턴 기준
-    const maxConsec = Number(body.maxConsec ?? 0);
-    filteredResults = allResults.filter((r) => {
-      const nums = [r.num1, r.num2, r.num3, r.num4, r.num5, r.num6]
-        .filter((n): n is number => n != null)
-        .sort((a, b) => a - b);
-      let maxRun = 1, curRun = 1;
-      for (let i = 1; i < nums.length; i++) {
-        if (nums[i] - nums[i - 1] === 1) { curRun++; maxRun = Math.max(maxRun, curRun); }
-        else curRun = 1;
-      }
-      if (maxConsec === 0) return maxRun === 1;
-      if (maxConsec === 2) return maxRun === 2;
-      return maxRun >= 3;
-    });
-  } else if (conditionType === 5) {
-    // 홀짝 비율
-    const oddCount = Number(body.oddCount ?? 3);
-    filteredResults = allResults.filter((r) => {
-      const nums = [r.num1, r.num2, r.num3, r.num4, r.num5, r.num6].filter((n): n is number => n != null);
-      return nums.filter(n => n % 2 === 1).length === oddCount;
-    });
-  } else if (conditionType === 6) {
-    // 합계 범위
-    const sumMin = Number(body.sumMin ?? 115);
-    const sumMax = Number(body.sumMax ?? 185);
-    filteredResults = allResults.filter((r) => {
-      const nums = [r.num1, r.num2, r.num3, r.num4, r.num5, r.num6].filter((n): n is number => n != null);
-      const sum = nums.reduce((a, b) => a + b, 0);
-      return sum >= sumMin && sum <= sumMax;
-    });
-  } else {
-    // 기간 기준 (년/월)
-    const years = Number(body.years ?? 0);
-    const months = Number(body.months ?? 0);
-    const limit = years > 0 || months > 0 ? Math.round(years * 52 + months * (52 / 12)) : null;
-    filteredResults = limit != null ? allResults.slice(0, limit) : allResults;
-  }
+  const filteredResults = filterByCondition(allResults, params);
 
-  const { numbers, frequencies } = getTopSixNumbers(filteredResults);
+  const { numbers, frequencies } = getTopKNumbers(filteredResults, 6);
   if (numbers.length < 6) {
     return NextResponse.json({ success: false, error: '충분한 데이터가 없습니다.' }, { status: 422 });
   }

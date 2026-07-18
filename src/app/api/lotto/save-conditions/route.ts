@@ -9,6 +9,7 @@ interface ConditionRow {
   num4: number;
   num5: number;
   num6: number;
+  full_data?: Record<string, unknown> | null;
 }
 
 export async function GET() {
@@ -16,9 +17,9 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from('lotto_conditions')
-    .select('condition_text, num1, num2, num3, num4, num5, num6')
+    .select('condition_text, num1, num2, num3, num4, num5, num6, full_data')
     .order('id', { ascending: true })
-    .limit(9999);
+    .limit(50);
 
   if (error) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
@@ -42,15 +43,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: '저장할 조건이 없습니다.' }, { status: 400 });
   }
 
-  // 기존 데이터 전체 삭제 후 새로 삽입 (항상 최신 상태 유지)
-  const { error: deleteError } = await supabase.from('lotto_conditions').delete().gte('id', 0);
-  if (deleteError) {
-    return NextResponse.json({ success: false, error: deleteError.message }, { status: 500 });
+  // 기존 행 ID 수집 (삭제 대상)
+  const { data: existing } = await supabase
+    .from('lotto_conditions')
+    .select('id');
+  const oldIds = (existing ?? []).map((r: { id: number }) => r.id);
+
+  // 새 행 삽입 먼저 — 성공해야 이전 데이터 삭제
+  const { error: insertError } = await supabase.from('lotto_conditions').insert(conditions);
+  if (insertError) {
+    return NextResponse.json({ success: false, error: insertError.message }, { status: 500 });
   }
 
-  const { error } = await supabase.from('lotto_conditions').insert(conditions);
-  if (error) {
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  // 삽입 성공 후 이전 행 삭제
+  if (oldIds.length > 0) {
+    await supabase.from('lotto_conditions').delete().in('id', oldIds);
   }
 
   return NextResponse.json({ success: true, data: { saved: conditions.length } });
